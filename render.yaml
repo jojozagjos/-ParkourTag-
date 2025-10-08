@@ -1,0 +1,21 @@
+services:
+  - type: static_site
+    name: parkour-tag-client
+    buildCommand: cd client && npm ci && npm run build
+    staticPublishPath: client/dist
+    envVars:
+      - key: VITE_SERVER_URL
+        value: https://parkour-tag-server.onrender.com
+
+  - type: web
+    name: parkour-tag-server
+    env: node
+    plan: free
+    buildCommand: cd server && npm ci
+    startCommand: node index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: CORS_ORIGIN
+        value: "*"

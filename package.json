@@ -1,0 +1,16 @@
+{
+  "name": "render-3d-multiplayer-parkour-tag",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm:dev --workspace=server\" \"npm:dev --workspace=client\"",
+    "build": "npm run build --workspace=client",
+    "start": "npm start --workspace=server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
