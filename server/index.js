@@ -250,113 +250,63 @@ function selectInitialIt(room) {
 }
 
 function physicsStep(room, dt) {
-  const mapData = room.mapData
+  const mapData = room.mapData;
   for (const p of Object.values(room.players)) {
-    const prevMode = p.mode
-    const inp = p.input
-    p.yaw = typeof inp.yaw === 'number' ? inp.yaw : p.yaw
-    p.pitch = clamp(typeof inp.pitch === 'number' ? inp.pitch : p.pitch, -Math.PI/2*0.95, Math.PI/2*0.95)
+    const inp = p.input;
+    p.yaw = typeof inp.yaw === 'number' ? inp.yaw : p.yaw;
+    p.pitch = clamp(typeof inp.pitch === 'number' ? inp.pitch : p.pitch, -Math.PI / 2 * 0.95, Math.PI / 2 * 0.95);
 
-  const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw)
-  // Use a forward vector consistent with other helpers (tryMantle)
-  const fw = [sin, 0, cos]
-  const rt = [cos, 0, -sin]
-    const accelBase = p.onGround ? P.MOVE_ACCEL : P.AIR_ACCEL
-    const maxSpeed = P.MAX_SPEED * (inp.sprint ? P.SPRINT_MULT : 1.0)
+    const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw);
+    const fw = [sin, 0, cos];
+    const rt = [cos, 0, -sin];
 
-    // Slide start
-    if (p.mode !== 'slide' && p.onGround && inp.crouch && len2(p.vel[0], p.vel[2]) > P.SLIDE_SPEED_MIN) {
-      p.mode = 'slide'
-      p.slideT = P.SLIDE_DURATION
-      io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
+    let wishX = 0, wishZ = 0;
+    if (inp.forward) { wishX += fw[0]; wishZ += fw[2]; }
+    if (inp.back)    { wishX -= fw[0]; wishZ -= fw[2]; }
+    if (inp.left)    { wishX -= rt[0]; wishZ -= rt[2]; }
+    if (inp.right)   { wishX += rt[0]; wishZ += rt[2]; }
+    const wishLen = Math.hypot(wishX, wishZ) || 1;
+    wishX /= wishLen; wishZ /= wishLen;
+
+    // Sprint only applies when on ground and holding forward
+    const isSprinting = p.onGround && !!inp.sprint && !!inp.forward;
+    const accelBase = p.onGround ? P.MOVE_ACCEL : P.AIR_ACCEL;
+    // Give sprint higher acceleration so speed ramps up faster
+    const accel = accelBase * (isSprinting ? 1.5 : 1.0);
+    const maxSpeed = isSprinting ? P.MAX_SPEED * P.SPRINT_MULT : P.MAX_SPEED;
+
+    p.vel[0] += wishX * accel * dt;
+    p.vel[2] += wishZ * accel * dt;
+
+    const sp = Math.hypot(p.vel[0], p.vel[2]);
+    if (sp > maxSpeed) {
+      const s = maxSpeed / sp;
+      p.vel[0] *= s;
+      p.vel[2] *= s;
     }
 
-    // Wallrun start
-    if (!p.onGround && p.mode !== 'wallrunL' && p.mode !== 'wallrunR' && p.wallRunT <= 0 && (inp.forward || inp.left || inp.right)) {
-      const started = tryStartWallRun(p, mapData)
-      if (started) io.to(room.code).emit('sfx', { kind: 'wallrun', id: p.id })
+    // Apply friction when on the ground (reduce friction while sprinting to maintain momentum)
+    if (p.onGround) {
+      const baseFriction = P.FRICTION;
+      const frictionMul = isSprinting ? 0.6 : 1.0;
+      const friction = (wishLen > 0.01 ? baseFriction * 0.5 : baseFriction) * frictionMul * dt;
+      p.vel[0] *= Math.max(0, 1 - friction);
+      p.vel[2] *= Math.max(0, 1 - friction);
     }
 
-    // Mantle attempt
-    if (!p.onGround && inp.jump && p.mantleT <= 0) {
-      const m = tryMantle(p, mapData)
-      if (m) io.to(room.code).emit('sfx', { kind: 'mantle', id: p.id })
-    }
-
-    // Wishdir: accumulate movement in world-space based on input
-    let wishX = 0, wishZ = 0
-    if (inp.forward) { wishX += fw[0]; wishZ += fw[2] }
-    if (inp.back)    { wishX -= fw[0]; wishZ -= fw[2] }
-    if (inp.left)    { wishX -= rt[0]; wishZ -= rt[2] }
-    if (inp.right)   { wishX += rt[0]; wishZ += rt[2] }
-    const wishLen = Math.hypot(wishX, wishZ) || 1
-    wishX /= wishLen; wishZ /= wishLen
-
-    // Acceleration
-    p.vel[0] += wishX * accelBase * dt
-    p.vel[2] += wishZ * accelBase * dt
-
-    // Cap speed
-    const sp = Math.hypot(p.vel[0], p.vel[2])
-    const cap = maxSpeed
-    if (sp > cap) { const s = cap / sp; p.vel[0] *= s; p.vel[2] *= s }
-
-    // Friction
-    if (p.onGround && wishLen < 0.01 && p.mode !== 'slide') {
-      // stronger friction when no input to reduce sliding
-      const fric = (P.FRICTION * 2.5) * dt
-      p.vel[0] *= Math.max(0, 1 - fric)
-      p.vel[2] *= Math.max(0, 1 - fric)
-      // snap small velocities to zero to prevent perpetual sliding
-      if (Math.abs(p.vel[0]) < 0.01) p.vel[0] = 0
-      if (Math.abs(p.vel[2]) < 0.01) p.vel[2] = 0
-    }
-
-    // Jump
-    if (inp.jump) {
-      if (p.onGround) {
-        p.vel[1] = P.JUMP_VELOCITY
-        p.onGround = false
-        io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
-      } else if (p.mode === 'wallrunL' || p.mode === 'wallrunR') {
-        const dir = p.mode === 'wallrunL' ? 1 : -1
-        p.vel[0] += rt[0] * dir * P.WALLJUMP_FORCE
-        p.vel[2] += rt[2] * dir * P.WALLJUMP_FORCE
-        p.vel[1] = P.JUMP_VELOCITY
-        p.mode = 'air'
-        p.wallRunT = 0.0
-        io.to(room.code).emit('sfx', { kind: 'walljump', id: p.id })
-      }
-    }
-
-    // Vertical
-    if (p.mode === 'wallrunL' || p.mode === 'wallrunR') {
-      p.vel[1] -= P.WALLRUN_GRAVITY * dt
-      p.wallRunT -= dt
-      if (p.wallRunT <= 0) p.mode = 'air'
-    } else if (p.mode === 'slide') {
-      p.vel[1] -= P.GRAVITY * dt
-      p.slideT -= dt
-      if (p.slideT <= 0 || !p.onGround) p.mode = 'air'
-      const fr = P.SLIDE_FRICTION * dt
-      p.vel[0] *= Math.max(0, 1 - fr)
-      p.vel[2] *= Math.max(0, 1 - fr)
+    if (inp.jump && p.onGround) {
+      p.vel[1] = P.JUMP_VELOCITY;
+      p.onGround = false;
     } else {
-      p.vel[1] -= P.GRAVITY * dt
+      p.vel[1] -= P.GRAVITY * dt;
     }
 
-    // Integrate
-    p.pos[0] += p.vel[0] * dt
-    p.pos[1] += p.vel[1] * dt
-    p.pos[2] += p.vel[2] * dt
+    p.pos[0] += p.vel[0] * dt;
+    p.pos[1] += p.vel[1] * dt;
+    p.pos[2] += p.vel[2] * dt;
 
-    resolveCollisions(p, mapData)
-
-    if (p.onGround && p.mode !== 'slide') p.mode = 'ground'
-    if (!p.onGround && p.mode === 'ground') p.mode = 'air'
-    if (prevMode !== p.mode && p.mode === 'ground') {
-      io.to(room.code).emit('sfx', { kind: 'land', id: p.id })
-    }
+    resolveCollisions(p, mapData);
+  // Debug logs removed
   }
 }
 

@@ -6,8 +6,8 @@ export type InputState = {
   left: boolean
   right: boolean
   jump: boolean
-  sprint: boolean
-  crouch: boolean
+  sprint: boolean // Added sprint property
+  crouch: boolean      // added for slide
   yaw: number
   pitch: number
 }
@@ -19,6 +19,7 @@ export type NetPlayer = {
   vel: Vec3
   yaw: number
   pitch: number
+  onGround: boolean
   mode: 'ground' | 'air' | 'slide' | 'wallrunL' | 'wallrunR' | 'mantle'
 }
 
