@@ -17,7 +17,9 @@ export default function App() {
   const [selfId, setSelfId] = useState<string>('')
 
   useEffect(() => {
-    const url = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'
+    // Use same-origin in production; allow override during local dev via VITE_SERVER_URL
+    const defaultUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001'
+    const url = (import.meta as any).env?.VITE_SERVER_URL || defaultUrl
   // Don't force websocket-only transport; allow polling fallback. This avoids
   // "WebSocket is closed before the connection is established" errors when
   // a websocket upgrade is not available locally (proxies, env, etc.).
