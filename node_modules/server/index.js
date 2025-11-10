@@ -120,6 +120,8 @@ function makePlayer(id, name) {
     // (no timer: run persists while conditions hold)
 
     mantleT: 0,
+    mantleFromY: 0,
+    mantleToY: 0,
 
     input: { forward:false,back:false,left:false,right:false,jump:false,sprint:false,crouch:false,yaw:0,pitch:0 }
   }
@@ -182,8 +184,9 @@ function resolveCollisions(player, mapData) {
 }
 
 function tryMantle(player, mapData) {
-  const forward = [Math.sin(player.yaw), 0, Math.cos(player.yaw)]
-  const checkDist = 0.8
+  // Use camera forward; previous sign caused mantling to work when facing away
+  const forward = [-Math.sin(player.yaw), 0, -Math.cos(player.yaw)]
+  const checkDist = 1.0
   const chestY = player.pos[1] + 1.0
   const headY = player.pos[1] + P.HEIGHT
   let targetTop = null
@@ -198,8 +201,10 @@ function tryMantle(player, mapData) {
     }
   }
   if (targetTop !== null) {
+    // Initialize smooth mantle animation
+    player.mantleFromY = player.pos[1]
+    player.mantleToY = targetTop + 0.02
     player.mantleT = P.MANTLE_DURATION
-    player.pos[1] = targetTop + 0.02
     player.vel[1] = 0
     player.mode = 'mantle'
     return 'mantle'
@@ -253,11 +258,11 @@ function nearestWall(player, mapData) {
 }
 
 /**
- * Wallrun:
- * - Requires: touching wall, Space held, AND correct strafe (A for left wall, D for right wall).
- * - Continues while touching + Space; ends only when either breaks.
- * - Must touch ground before starting again (no back-to-back runs).
- * - Moves forward along wall (never backwards).
+ * Wallrun (updated):
+ * - Requires: airborne + touching vertical wall + correct strafe key toward wall side (A for left, D for right).
+ * - Disallowed if player is facing directly into the wall (facingDot > 0.5): only side contacts.
+ * - Persists automatically while conditions hold (no jump-hold necessary).
+ * - Single outward boost per run on jump press edge; preserves forward momentum and kicks away.
  */
 function doWallrun(p, inp, dt, mapData) {
   // Per-player cooldown prevents immediate re-entry after ending a run
@@ -277,28 +282,11 @@ function doWallrun(p, inp, dt, mapData) {
     return null
   }
 
-  const jumpHeld = !!(inp && inp.jump)
-  if (!jumpHeld) {
-    // If we were running and released Space → exit & lock until ground
-    if (p.mode === 'wallrunL' || p.mode === 'wallrunR') {
-      p.mode = 'air'
-      p.wallLockUntilGround = true
-      p._wallrunCooldown = P.WALLRUN_COOLDOWN
-      p._wallRunActive = false
-    }
-    return null
-  }
-  if (p.wallLockUntilGround) return null // must touch ground first
-
   // Proximity
   const hit = nearestWall(p, mapData)
-  if (hit) {
-    console.log('wall hit', hit.normal, 'gap', hit.gap.toFixed(3))
-  }
   if (!hit) {
     if (p.mode === 'wallrunL' || p.mode === 'wallrunR') {
       p.mode = 'air'
-      p.wallLockUntilGround = true
       p._wallrunCooldown = P.WALLRUN_COOLDOWN
       p._wallRunActive = false
     }
@@ -309,15 +297,24 @@ function doWallrun(p, inp, dt, mapData) {
   const fw = [Math.sin(p.yaw), 0, Math.cos(p.yaw)]
   const rt = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)]
   const sideDot = dot3(rt, hit.normal)
+  const facingDot = Math.abs(dot3(fw, hit.normal)) // 1 = facing straight into wall
 
   // Require matching strafe key:
   const needRight = sideDot > 0        // wall on right → need D
   const needLeft  = sideDot < 0        // wall on left  → need A
-  if ((needRight && !inp.right) || (needLeft && !inp.left)) {
-    // If we were running and let go of strafe → exit & lock until ground
+  // Wall must be to the side, not head-on; require sideways alignment
+  if (facingDot > 0.5) {
     if (p.mode === 'wallrunL' || p.mode === 'wallrunR') {
       p.mode = 'air'
-      p.wallLockUntilGround = true
+      p._wallrunCooldown = P.WALLRUN_COOLDOWN
+      p._wallRunActive = false
+    }
+    return null
+  }
+  if ((needRight && !inp.right) || (needLeft && !inp.left)) {
+    // If we were running and let go of strafe → exit
+    if (p.mode === 'wallrunL' || p.mode === 'wallrunR') {
+      p.mode = 'air'
       p._wallrunCooldown = P.WALLRUN_COOLDOWN
       p._wallRunActive = false
     }
@@ -326,12 +323,13 @@ function doWallrun(p, inp, dt, mapData) {
 
   // Enter/continue run
   const enterNow = !(p.mode === 'wallrunL' || p.mode === 'wallrunR')
+  const wasOnGround = p.onGround
   p.mode = sideDot > 0 ? 'wallrunL' : 'wallrunR'
   p.onGround = false
   p.wallSide = sideDot > 0 ? +1 : -1
 
-  // If starting from ground while Space held, pop up slightly
-  if (enterNow && p.airSince <= 0.02 && p.onGround) {
+  // If starting from ground, pop up slightly
+  if (enterNow && p.airSince <= 0.02 && wasOnGround) {
     p.pos[1] += 0.02
     p.vel[1] = Math.max(p.vel[1], 1.6)
   }
@@ -340,6 +338,7 @@ function doWallrun(p, inp, dt, mapData) {
   if (enterNow) {
     // clear any existing cooldown on successful entry
     p._wallrunCooldown = 0
+    p._wallrunBoostUsed = false
     const planarSpeed = Math.hypot(p.vel[0], p.vel[2])
     p._wallRunDuration = P.WALLRUN_DURATION
     p._wallRunT = p._wallRunDuration
@@ -356,8 +355,12 @@ function doWallrun(p, inp, dt, mapData) {
   let along = norm3(cross(up, hit.normal))
   if (dot3(along, fw) < 0) along = mul3(along, -1) // ensure forward
 
-  // Blend velocity to target planar speed
-  const targetPlanar = mul3(along, -P.WALLRUN_SPEED)
+  // Blend velocity toward along-the-wall target while preserving (not reducing) existing forward momentum
+  const planarBefore = [p.vel[0], 0, p.vel[2]]
+  const alongSpeed = dot3(planarBefore, along)
+  // Don't flip direction or steal speed: only accelerate up to at least WALLRUN_SPEED
+  const desiredSpeed = Math.max(P.WALLRUN_SPEED, alongSpeed)
+  const targetPlanar = mul3(along, desiredSpeed)
   const tangential = projOnPlane([p.vel[0], p.vel[1], p.vel[2]], hit.normal)
   const blend = Math.min(1, dt * 8)
   const vNew = [
@@ -391,18 +394,35 @@ function doWallrun(p, inp, dt, mapData) {
   const jumpPress = !!(inp && inp.jump) && !p.wasHoldingJump
   if (jumpPress && (p.mode === 'wallrunL' || p.mode === 'wallrunR') && !p._wallrunBoostUsed) {
     p._wallrunBoostUsed = true
-    // Outward + slight upward + forward blend; tuned for smoother exit.
-    const OUT_SCALE = P.WALLJUMP_FORCE || 6.5
-    const UP_SCALE = (P.WALLJUMP_FORCE || 6.5) * 0.6
-    const FWD_SCALE = (P.WALLJUMP_FORCE || 6.5) * 0.35
-    const out = mul3(hit.normal, OUT_SCALE)
-    const upV = [0, UP_SCALE, 0]
-    const fwdBoost = mul3(along, FWD_SCALE)
-    p.vel[0] = out[0] + upV[0] + fwdBoost[0]
-    p.vel[1] = out[1] + upV[1] + fwdBoost[1]
-    p.vel[2] = out[2] + upV[2] + fwdBoost[2]
+    // Preserve forward momentum and kick clearly away from wall
+    const baseForce = P.WALLJUMP_FORCE || 6.5
+    const planarBefore = [p.vel[0], 0, p.vel[2]]
+    const alongSpeed = dot3(planarBefore, along)
+    const preservedAlong = mul3(along, Math.max(0, alongSpeed))
+    const nWall = norm3([hit.normal[0], 0, hit.normal[2]])
+  const out = mul3(nWall, -1) // ensure we push away from wall
+    const outwardSpeed = baseForce * 1.4 + Math.max(0, alongSpeed) * 0.50
+    const exitForwardBoost = baseForce * 0.12
+    let planarNew = [
+      preservedAlong[0] + out[0] * outwardSpeed + along[0] * exitForwardBoost,
+      0,
+      preservedAlong[2] + out[2] * outwardSpeed + along[2] * exitForwardBoost,
+    ]
+    // Remove any inward component relative to outward direction
+    const outDot = dot3(planarNew, out)
+    if (outDot < 0) {
+      planarNew[0] += out[0] * (-outDot)
+      planarNew[2] += out[2] * (-outDot)
+    }
+    p.vel[0] = planarNew[0]
+    p.vel[2] = planarNew[2]
+    // Vertical kept modest
+    const upVel = baseForce * 0.25 + Math.max(0, alongSpeed) * 0.06
+    p.vel[1] = Math.max(p.vel[1], upVel)
+    // Small positional nudge to avoid immediate re-collision
+    p.pos[0] += out[0] * 0.05
+    p.pos[2] += out[2] * 0.05
     p.mode = 'air'
-    // Brief cooldown so player can't instantly reattach same frame.
     p._wallrunCooldown = P.WALLRUN_COOLDOWN * 0.5
     p._wallRunActive = false
     return 'jump'
@@ -434,6 +454,27 @@ function physicsStep(room, dt) {
     const inp = p.input
     p.yaw = typeof inp.yaw === 'number' ? inp.yaw : p.yaw
     p.pitch = clamp(typeof inp.pitch === 'number' ? inp.pitch : p.pitch, -Math.PI/2*0.95, Math.PI/2*0.95)
+
+    // Handle mantle animation as a special state (freeze controls/gravity)
+    if (p.mode === 'mantle') {
+      const dur = Math.max(1e-6, P.MANTLE_DURATION)
+      p.mantleT = Math.max(0, p.mantleT - dt)
+      const t = 1 - (p.mantleT / dur)
+      // ease in-out (smoothstep)
+      const u = t * t * (3 - 2 * t)
+      const y = p.mantleFromY + (p.mantleToY - p.mantleFromY) * u
+      p.pos[1] = y
+      p.vel[1] = 0
+      p.onGround = false
+      if (p.mantleT <= 0) {
+        p.pos[1] = p.mantleToY
+        p.vel[1] = Math.max(p.vel[1], 2.0)
+        p.mode = 'air'
+      }
+      // Skip rest of physics this tick for mantle
+      // Still emit snapshot later in loop
+      continue
+    }
 
     const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw)
     const fw = [sin, 0, cos]
@@ -471,12 +512,18 @@ function physicsStep(room, dt) {
       p.vel[2] *= Math.max(0, 1 - friction)
     }
 
-    // Jump (with opportunistic mantle)
+    // Jump press (edge) with opportunistic mantle including brief coyote-time in air
     let mantleSfx = null
-    if (inp.jump && p.onGround) {
-      p.vel[1] = P.JUMP_VELOCITY
-      p.onGround = false
-      mantleSfx = tryMantle(p, mapData)
+    const jumpPressEdge = !!inp.jump && !p.wasHoldingJump
+    if (jumpPressEdge) {
+      const canMantle = p.onGround || ((p.airSince || 0) < 0.25)
+      if (canMantle) {
+        mantleSfx = tryMantle(p, mapData)
+      }
+      if (p.onGround && !mantleSfx) {
+        p.vel[1] = P.JUMP_VELOCITY
+        p.onGround = false
+      }
     }
 
     // Gravity baseline
@@ -494,8 +541,19 @@ function physicsStep(room, dt) {
     if (p.onGround) p.airSince = 0
     else p.airSince = (p.airSince || 0) + dt
 
+    // Allow mantling while falling: if holding jump and moving downward near a ledge, attempt a catch
+    // This makes catching an edge while dropping easier than the short jump-edge coyote window
+    if (!p.onGround && p.vel[1] < -0.5 && inp.jump) {
+      const mantleSfxFall = tryMantle(p, mapData)
+      if (mantleSfxFall) {
+        io.to(room.code).emit('sfx', { kind: mantleSfxFall, id: p.id })
+        // Enter mantle state immediately; skip wallrun/other processing this tick
+        continue
+      }
+    }
+
     // Wallrun (can override mode/vel)
-    const sfx = doWallrun(p, inp, dt, mapData)
+  const sfx = doWallrun(p, inp, dt, mapData)
 
     // Default mode if not in a special state
     if (p.onGround) {
@@ -510,7 +568,7 @@ function physicsStep(room, dt) {
     p.wasHoldingJump = !!inp.jump
 
     // Respawn if fallen below kill plane
-    if (p.pos[1] < -10) {
+    if (p.pos[1] < -40) {
       // Choose a spawn by hashing id so it's stable
       const ids = Object.keys(room.players)
       const idx = ids.indexOf(p.id)
@@ -521,6 +579,7 @@ function physicsStep(room, dt) {
       p.onGround = false
       p.airSince = 0
       p._wallrunBoostUsed = false
+      p.mantleT = 0; p.mantleFromY = 0; p.mantleToY = 0
       io.to(room.code).emit('sfx', { kind: 'land', id: p.id })
     }
   }
@@ -581,6 +640,7 @@ function startRound(room) {
     p.wallSide = 0
     p.wallLockUntilGround = false
     p._wallrunBoostUsed = false
+    p.mantleT = 0; p.mantleFromY = 0; p.mantleToY = 0
     p.spawnIndex = i
   })
   room.roundTime = TAG.ROUND_SECONDS
