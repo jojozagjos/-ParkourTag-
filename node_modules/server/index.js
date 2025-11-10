@@ -31,17 +31,31 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (req, res) => {
   res.json({ name: 'devtools-manifest', description: 'Local devtools helper', version: '1' })
 })
 
-app.get('/', (req, res) => {
-  res.type('html').send(`
-    <html><head><title>Game server</title></head>
-    <body style="font-family: system-ui, Arial; padding: 24px">
-      <h1>Game server (dev)</h1>
-      <p>The server is running on port ${PORT}.</p>
-      <p>Open the client at <a href="http://localhost:3000" target="_blank">http://localhost:3000</a></p>
-      <p>Health: <a href="/healthz">/healthz</a></p>
-    </body></html>
-  `)
-})
+// Static client build (serve client/dist). If not built, fallback page remains.
+const clientDist = path.join(__dirname, '..', 'client', 'dist')
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist, { index: false }))
+  // SPA fallback: always return built index.html for unknown paths (except API & health)
+  app.get('/', (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'))
+  })
+  app.get(/^(?!\/healthz).*/, (req, res, next) => {
+    // If the request would have matched a static file it is served already; otherwise send index.html
+    if (req.method !== 'GET') return next()
+    res.sendFile(path.join(clientDist, 'index.html'))
+  })
+} else {
+  app.get('/', (req, res) => {
+    res.type('html').send(`
+      <html><head><title>Game server</title></head>
+      <body style="font-family: system-ui, Arial; padding: 24px">
+        <h1>Game server (dev)</h1>
+        <p>Client build not found (expected at /client/dist). Deploy the client or run build.</p>
+        <p>Health: <a href="/healthz">/healthz</a></p>
+      </body></html>
+    `)
+  })
+}
 app.get('/healthz', (_, res) => res.status(200).send('ok'))
 
 const server = http.createServer(app)
