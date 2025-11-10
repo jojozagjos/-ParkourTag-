@@ -12,7 +12,6 @@ import { SnapshotBuffer } from './interp'
 import { pulseScreen } from '../sfx'
 import { playSfx } from '../assets'
 import Skybox from './Skybox'
-import EnvironmentHDRI from './EnvironmentHDRI'
 import { TextureLoader } from 'three'
 // Import the face texture so Vite copies it into dist; absolute /assets paths were not bundled.
 import faceTexturePath from '../../assets/textures/face.png'
@@ -109,12 +108,9 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
         }}
       >
         <Suspense fallback={null}>
-          {/* Use HDRI if provided via build-time env (VITE_HDRI), else fallback skybox */}
-          {((import.meta as any).env?.VITE_HDRI)
-            ? <EnvironmentHDRI src={(import.meta as any).env.VITE_HDRI} background environment />
-            : <Skybox />}
+          {/* Match sun direction with main directional light position */}
+          <Skybox sunDir={new THREE.Vector3(14,22,12).normalize().toArray()} />
           {/* Lighting pass: stronger fill + key */}
-          <color attach="background" args={[ '#0e1626' ]} />
           <hemisphereLight args={['#e3f2ff', '#242a35', 1.4]} />
           <ambientLight intensity={0.7} />
           {/* Lower shadow-mapSize to reduce GPU shadow cost */}

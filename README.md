@@ -23,24 +23,6 @@ You can override the server URL for the client in dev:
 export VITE_SERVER_URL=http://localhost:3000
 ```
 
-### Optional: HDRI Environment
-
-You can replace the gradient skybox with a high‑dynamic‑range image for image‑based lighting (IBL).
-
-1. Place an HDR file (e.g. `studio.hdr`) into `client/public/` or host it at a URL.
-2. Set the env var before building:
-	```bash
-	export VITE_HDRI=/studio.hdr          # if in public/
-	# or an absolute URL:
-	export VITE_HDRI=https://example.com/hdr/studio.hdr
-	```
-3. Rebuild the client: `npm run build --workspace=client`.
-
-At runtime, if `VITE_HDRI` is defined the app loads it via `EnvironmentHDRI` (PMREM filtered) and assigns it to `scene.environment` + `scene.background` for better lighting and reflections.
-
-If the HDR fails to load, it falls back to the existing procedural skybox without crashing.
-```
-
 ## Controls
 
 - **Mouse**: look

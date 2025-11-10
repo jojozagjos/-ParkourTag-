@@ -110,11 +110,13 @@ function makePlayer(id, name) {
     airSince: 0,
     mode: 'air',
     slideT: 0,
+    spawnIndex: 0,
 
     // wallrun state
     wallSide: 0,                // -1 = left, +1 = right (relative to player)
     wallLockUntilGround: false, // must touch ground before next run
     wasHoldingJump: false,      // edge detect if you ever add jump-press
+    _wallrunBoostUsed: false,   // allow one outward boost per run
     // (no timer: run persists while conditions hold)
 
     mantleT: 0,
@@ -385,19 +387,25 @@ function doWallrun(p, inp, dt, mapData) {
   const stick = mul3(hit.normal, STICK_FORCE * dt)
   vNew[0] += stick[0]; vNew[1] += stick[1]; vNew[2] += stick[2]
 
-  // If the player presses jump (edge) while running, perform a wall-jump away from the wall
+  // Titanfall-style outward boost: fresh Space press during wallrun propels away from wall once.
   const jumpPress = !!(inp && inp.jump) && !p.wasHoldingJump
-  if (jumpPress && (p.mode === 'wallrunL' || p.mode === 'wallrunR')) {
-    const out = mul3(hit.normal, P.WALLJUMP_FORCE)
-    const up = [0, P.WALLJUMP_FORCE * 0.85, 0]
-    const fwdBoost = mul3(along, P.WALLJUMP_FORCE * 0.25)
-    p.vel[0] = out[0] + up[0] + fwdBoost[0]
-    p.vel[1] = out[1] + up[1] + fwdBoost[1]
-    p.vel[2] = out[2] + up[2] + fwdBoost[2]
+  if (jumpPress && (p.mode === 'wallrunL' || p.mode === 'wallrunR') && !p._wallrunBoostUsed) {
+    p._wallrunBoostUsed = true
+    // Outward + slight upward + forward blend; tuned for smoother exit.
+    const OUT_SCALE = P.WALLJUMP_FORCE || 6.5
+    const UP_SCALE = (P.WALLJUMP_FORCE || 6.5) * 0.6
+    const FWD_SCALE = (P.WALLJUMP_FORCE || 6.5) * 0.35
+    const out = mul3(hit.normal, OUT_SCALE)
+    const upV = [0, UP_SCALE, 0]
+    const fwdBoost = mul3(along, FWD_SCALE)
+    p.vel[0] = out[0] + upV[0] + fwdBoost[0]
+    p.vel[1] = out[1] + upV[1] + fwdBoost[1]
+    p.vel[2] = out[2] + upV[2] + fwdBoost[2]
     p.mode = 'air'
-    p._wallrunCooldown = P.WALLRUN_COOLDOWN
+    // Brief cooldown so player can't instantly reattach same frame.
+    p._wallrunCooldown = P.WALLRUN_COOLDOWN * 0.5
     p._wallRunActive = false
-    return 'walljump'
+    return 'jump'
   }
 
   p.vel[0] = vNew[0]
@@ -500,6 +508,21 @@ function physicsStep(room, dt) {
     if (sfx) io.to(room.code).emit('sfx', { kind: sfx, id: p.id })
     // track jump edge for wall-jump detection
     p.wasHoldingJump = !!inp.jump
+
+    // Respawn if fallen below kill plane
+    if (p.pos[1] < -10) {
+      // Choose a spawn by hashing id so it's stable
+      const ids = Object.keys(room.players)
+      const idx = ids.indexOf(p.id)
+      const spawn = pickSpawn(mapData, Math.max(0, idx))
+      p.pos = [spawn[0], spawn[1], spawn[2]]
+      p.vel = [0, 0, 0]
+      p.mode = 'air'
+      p.onGround = false
+      p.airSince = 0
+      p._wallrunBoostUsed = false
+      io.to(room.code).emit('sfx', { kind: 'land', id: p.id })
+    }
   }
 }
 
@@ -557,6 +580,8 @@ function startRound(room) {
     p.airSince = 0
     p.wallSide = 0
     p.wallLockUntilGround = false
+    p._wallrunBoostUsed = false
+    p.spawnIndex = i
   })
   room.roundTime = TAG.ROUND_SECONDS
   room.intermission = false
@@ -612,6 +637,7 @@ function startLoop(code) {
       if (room.intermissionTime <= 0) {
         chooseNextMap(room)
         startRound(room)
+        io.to(code).emit('game:started')
       }
     }
     io.to(code).emit('world:snapshot', snapshot(room))
