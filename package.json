@@ -8,7 +8,11 @@
   "scripts": {
     "dev": "concurrently -n server,client -c blue,green \"npm:dev --workspace=server\" \"npm:dev --workspace=client\"",
     "build": "npm run build --workspace=client",
+    "build:all": "npm install -ws --include=dev && npm run build --workspace=client",
     "start": "npm start --workspace=server"
+  },
+  "engines": {
+    "node": ">=20 <21"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
