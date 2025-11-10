@@ -31,38 +31,17 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (req, res) => {
   res.json({ name: 'devtools-manifest', description: 'Local devtools helper', version: '1' })
 })
 
-// Serve built client when deployed (expects client/dist to exist)
-const distDir = path.join(__dirname, '..', 'client', 'dist')
-if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir, { maxAge: '1h' }))
-  // SPA fallback for any non-API GET
-  app.get('/', (req, res) => {
-    res.sendFile(path.join(distDir, 'index.html'))
-  })
-  app.get('/healthz', (_, res) => res.status(200).send('ok'))
-  app.get('*', (req, res, next) => {
-    if (req.method !== 'GET') return next()
-    // If file exists serve normally, else fallback to index.html
-    const target = path.join(distDir, req.path)
-    fs.access(target, fs.constants.F_OK, (err) => {
-      if (err) return res.sendFile(path.join(distDir, 'index.html'))
-      res.sendFile(target)
-    })
-  })
-} else {
-  // Dev root page if dist not built
-  app.get('/', (req, res) => {
-    res.type('html').send(`
-      <html><head><title>Game server</title></head>
-      <body style="font-family: system-ui, Arial; padding: 24px">
-        <h1>Game server (dev)</h1>
-        <p>The server is running on port ${PORT}.</p>
-        <p>Client build not found (expected /client/dist). Run the Vite build.</p>
-        <p>Health: <a href="/healthz">/healthz</a></p>
-      </body></html>
-    `)
-  })
-}
+app.get('/', (req, res) => {
+  res.type('html').send(`
+    <html><head><title>Game server</title></head>
+    <body style="font-family: system-ui, Arial; padding: 24px">
+      <h1>Game server (dev)</h1>
+      <p>The server is running on port ${PORT}.</p>
+      <p>Open the client at <a href="http://localhost:3000" target="_blank">http://localhost:3000</a></p>
+      <p>Health: <a href="/healthz">/healthz</a></p>
+    </body></html>
+  `)
+})
 app.get('/healthz', (_, res) => res.status(200).send('ok'))
 
 const server = http.createServer(app)
