@@ -17,9 +17,9 @@ app.use(cors())
 app.use((req, res, next) => {
   const connectSources = [
     "'self'",
-    'http://localhost:3000', 'http://localhost:3001',
-    'https://localhost:3000', 'https://localhost:3001',
-    'ws://localhost:3001', 'wss://localhost:3001',
+    'http://localhost:3000',
+    'https://localhost:3000',
+    'ws://localhost:3000', 'wss://localhost:3000',
     'ws:', 'wss:', 'http:', 'https:'
   ].join(' ')
   const csp = `default-src 'self' 'unsafe-inline' data: blob:; connect-src ${connectSources}; img-src 'self' data:; frame-src 'self'`
@@ -33,6 +33,11 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (req, res) => {
 
 // Static client build (serve client/dist). If not built, fallback page remains.
 const clientDist = path.join(__dirname, '..', 'client', 'dist')
+const clientAssets = path.join(__dirname, '..', 'client', 'assets')
+// Serve raw assets referenced at runtime by absolute paths like "/assets/…"
+if (fs.existsSync(clientAssets)) {
+  app.use('/assets', express.static(clientAssets, { fallthrough: true }))
+}
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, { index: false }))
   // SPA fallback: always return built index.html for unknown paths (except API & health)
@@ -60,7 +65,7 @@ app.get('/healthz', (_, res) => res.status(200).send('ok'))
 
 const server = http.createServer(app)
 const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN || '*', methods: ['GET','POST'] } })
-const PORT = process.env.PORT || 3001
+const PORT = process.env.PORT || 3000
 
 // --------------------- Utility ---------------------
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)) }

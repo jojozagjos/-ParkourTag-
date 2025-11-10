@@ -1,14 +1,16 @@
+// Use import.meta.url so Vite copies these into dist and returns hashed URLs.
+// This file lives in src/, so assets are one directory up: ../assets/...
 export const SFX_URLS = {
-  jump: '/assets/sfx/jump.wav',
-  slide: '/assets/sfx/slide.wav',
-  wallrun: '/assets/sfx/wallrun.wav',
-  walljump: '/assets/sfx/walljump.wav',
-  mantle: '/assets/sfx/mantle.wav',
-  land: '/assets/sfx/land.wav',
-  tag: '/assets/sfx/tag.wav',
-  countdown: '/assets/sfx/countdown.wav',
-  round_start: '/assets/sfx/round_start.wav',
-  round_end: '/assets/sfx/round_end.wav',
+  jump: new URL('../assets/sfx/jump.wav', import.meta.url).toString(),
+  slide: new URL('../assets/sfx/slide.wav', import.meta.url).toString(),
+  wallrun: new URL('../assets/sfx/wallrun.wav', import.meta.url).toString(),
+  walljump: new URL('../assets/sfx/walljump.wav', import.meta.url).toString(),
+  mantle: new URL('../assets/sfx/mantle.wav', import.meta.url).toString(),
+  land: new URL('../assets/sfx/land.wav', import.meta.url).toString(),
+  tag: new URL('../assets/sfx/tag.wav', import.meta.url).toString(),
+  countdown: new URL('../assets/sfx/countdown.wav', import.meta.url).toString(),
+  round_start: new URL('../assets/sfx/round_start.wav', import.meta.url).toString(),
+  round_end: new URL('../assets/sfx/round_end.wav', import.meta.url).toString(),
 }
 
 const cache = new Map<string, HTMLAudioElement>()

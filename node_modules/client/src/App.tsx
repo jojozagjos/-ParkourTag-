@@ -18,7 +18,7 @@ export default function App() {
 
   useEffect(() => {
     // Use same-origin in production; allow override during local dev via VITE_SERVER_URL
-    const defaultUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001'
+    const defaultUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
     const url = (import.meta as any).env?.VITE_SERVER_URL || defaultUrl
   // Don't force websocket-only transport; allow polling fallback. This avoids
   // "WebSocket is closed before the connection is established" errors when

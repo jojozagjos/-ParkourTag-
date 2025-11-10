@@ -1,5 +1,5 @@
 const { io } = require('socket.io-client')
-const url = process.env.URL || 'http://localhost:3001'
+const url = process.env.URL || 'http://localhost:3000'
 console.log('test-client connecting to', url)
 const s = io(url, { reconnectionAttempts: 3, timeout: 5000 })
 

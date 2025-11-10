@@ -1,5 +1,6 @@
 import React, { Suspense, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
+import * as THREE from 'three'
 import type { Socket } from 'socket.io-client'
 import { useFPControls } from '../controls/useFPControls'
 import { MapMeshes } from '../map'
@@ -11,8 +12,10 @@ import { SnapshotBuffer } from './interp'
 import { pulseScreen } from '../sfx'
 import { playSfx } from '../assets'
 import Skybox from './Skybox'
+import EnvironmentHDRI from './EnvironmentHDRI'
 import { TextureLoader } from 'three'
-import faceTexturePath from '/assets/textures/face.png'
+// Import the face texture so Vite copies it into dist; absolute /assets paths were not bundled.
+import faceTexturePath from '../../assets/textures/face.png'
 import constants from '../../../shared/constants.json'
 
 export default function Game({ socket, selfId }: { socket: Socket; selfId: string }) {
@@ -96,19 +99,41 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
         shadows
         dpr={Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 1.25)}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
+        onCreated={({ gl }) => {
+          // Use ACES tone mapping but increase exposure a bit for visibility; ensure sRGB output.
+          gl.outputColorSpace = THREE.SRGBColorSpace
+          gl.toneMapping = THREE.ACESFilmicToneMapping
+          gl.toneMappingExposure = 1.25
+          gl.shadowMap.enabled = true
+          gl.shadowMap.type = THREE.PCFSoftShadowMap
+        }}
       >
         <Suspense fallback={null}>
-          <Skybox />
-          <hemisphereLight args={['#e6f7ff', '#44404a', 0.9]} />
-          <ambientLight intensity={0.5} />
+          {/* Use HDRI if provided via build-time env (VITE_HDRI), else fallback skybox */}
+          {((import.meta as any).env?.VITE_HDRI)
+            ? <EnvironmentHDRI src={(import.meta as any).env.VITE_HDRI} background environment />
+            : <Skybox />}
+          {/* Lighting pass: stronger fill + key */}
+          <color attach="background" args={[ '#0e1626' ]} />
+          <hemisphereLight args={['#e3f2ff', '#242a35', 1.4]} />
+          <ambientLight intensity={0.7} />
           {/* Lower shadow-mapSize to reduce GPU shadow cost */}
           <directionalLight
-            position={[10, 14, 6]}
-            intensity={1.2}
+            position={[14, 22, 12]}
+            intensity={2.0}
             castShadow
-            shadow-mapSize={[1024, 1024]}
-            shadow-bias={-0.0005}
+            shadow-mapSize={[2048, 2048]}
+            shadow-bias={-0.00035}
+            shadow-normalBias={0.02}
+            shadow-camera-near={1}
+            shadow-camera-far={80}
+            shadow-camera-left={-35}
+            shadow-camera-right={35}
+            shadow-camera-top={35}
+            shadow-camera-bottom={-35}
           />
+          {/* Secondary rim light to lift silhouettes */}
+          <directionalLight position={[-10, 12, -8]} intensity={0.6} color={'#b8d4ff'} />
           <MapMeshes />
           {snap?.players.map(p => (
             <Avatar key={p.id} p={p} isSelf={p.id === selfId} isIt={snap?.itId === p.id} />
@@ -176,7 +201,7 @@ const Avatar = memo(function Avatar({
       {/* Do not render the local player's body or face in first-person */}
       {!isSelf && (
         <>
-          <mesh position={[0, boxCenterY, 0]} castShadow={false} receiveShadow={false}>
+          <mesh position={[0, boxCenterY, 0]} castShadow receiveShadow>
             {bodyGeom}
             {bodyMat}
           </mesh>

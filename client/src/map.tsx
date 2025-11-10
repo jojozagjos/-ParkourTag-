@@ -17,13 +17,15 @@ export type AABB = { min: [number, number, number], max: [number, number, number
 export function MapMeshes() {
   const loader = new THREE.TextureLoader()
   const floorTx = useMemo(() => {
-    const t = loader.load('/assets/textures/floor_grid.png')
+    const t = loader.load(new URL('../assets/textures/floor_grid.png', import.meta.url).toString())
+    t.colorSpace = THREE.SRGBColorSpace
     t.wrapS = t.wrapT = THREE.RepeatWrapping
     t.repeat.set(10, 10)
     return t
   }, [])
   const wallTx = useMemo(() => {
-    const t = loader.load('/assets/textures/wall_noise.png')
+    const t = loader.load(new URL('../assets/textures/wall_noise.png', import.meta.url).toString())
+    t.colorSpace = THREE.SRGBColorSpace
     t.wrapS = t.wrapT = THREE.RepeatWrapping
     t.repeat.set(4, 4)
     return t
