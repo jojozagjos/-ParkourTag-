@@ -6,7 +6,7 @@ export default function ResultsModal({ results }:{ results: RoundResults | null 
   return (
     <div style={{
       position:'fixed', inset:0, display:'grid', placeItems:'center',
-      background:'rgba(0,0,0,0.5)'
+      background:'rgba(0,0,0,0.5)', zIndex: 1000
     }}>
       <div style={{ background:'#0b1128', padding:24, borderRadius:12, width:360 }}>
         <h3 style={{ marginTop:0 }}>Round Results</h3>

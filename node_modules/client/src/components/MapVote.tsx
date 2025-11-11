@@ -7,7 +7,8 @@ export default function MapVote({ socket, maps, current }:{ socket: Socket, maps
   return (
     <div style={{
       position:'fixed', bottom:12, left:'50%', transform:'translateX(-50%)',
-      background:'rgba(0,0,0,0.35)', padding:'10px 12px', borderRadius:10, display:'flex', gap:10
+      background:'rgba(0,0,0,0.35)', padding:'10px 12px', borderRadius:10, display:'flex', gap:10,
+      zIndex: 10
     }}>
       <span style={{ opacity:0.8, marginRight:6 }}>Vote next map:</span>
       {opts.map(m => (

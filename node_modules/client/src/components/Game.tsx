@@ -34,6 +34,9 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
 
     const onResults = (r: RoundResults) => setResults(r)
 
+    // New round started: clear any previous results modal
+    const onGameStarted = () => setResults(null)
+
     const onLobbyUpdate = (p: { maps?: string[]; mapName?: string }) => {
       if (p?.maps) setMaps(p.maps)
       if (p?.mapName) setMapName(p.mapName)
@@ -63,12 +66,14 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
 
     socket.on('world:snapshot', onSnap)
     socket.on('round:results', onResults)
+    socket.on('game:started', onGameStarted)
     socket.on('lobby:update', onLobbyUpdate)
     socket.on('sfx', onSfx)
 
     return () => {
       socket.off('world:snapshot', onSnap)
       socket.off('round:results', onResults)
+      socket.off('game:started', onGameStarted)
       socket.off('lobby:update', onLobbyUpdate)
       socket.off('sfx', onSfx)
     }
@@ -85,6 +90,9 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [])
+
+  // Note: Do not clear results based on snapshots; snapshots can arrive slightly out of order
+  // relative to events due to client-side buffering. We only clear on 'game:started'.
 
   const me = useMemo(() => snap?.players.find(p => p.id === selfId) ?? null, [snap, selfId])
 
