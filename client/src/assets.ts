@@ -2,9 +2,7 @@
 // This file lives in src/, so assets are one directory up: ../assets/...
 export const SFX_URLS = {
   jump: new URL('../assets/sfx/jump.wav', import.meta.url).toString(),
-  slide: new URL('../assets/sfx/slide.wav', import.meta.url).toString(),
   wallrun: new URL('../assets/sfx/wallrun.wav', import.meta.url).toString(),
-  walljump: new URL('../assets/sfx/walljump.wav', import.meta.url).toString(),
   mantle: new URL('../assets/sfx/mantle.wav', import.meta.url).toString(),
   land: new URL('../assets/sfx/land.wav', import.meta.url).toString(),
   tag: new URL('../assets/sfx/tag.wav', import.meta.url).toString(),
@@ -28,7 +26,4 @@ export function playSfx(name: keyof typeof SFX_URLS, volume = 0.6) {
   inst.play().catch(() => {})
 }
 
-export default {
-  playSfx,
-  SFX_URLS,
-}
+// No default export; use named exports

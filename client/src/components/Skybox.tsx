@@ -17,7 +17,7 @@ type Props = {
 export default function Skybox({
   size = 800,
   topColor = '#bfe9ff',
-  bottomColor = '#dae9f5ff',
+  bottomColor = '#dae9f5',
   sunDir = [0.5, 0.8, 0.2],
   sunColor = '#fff6d5',
   sunSize = 0.045,

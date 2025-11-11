@@ -109,12 +109,7 @@ function makePlayer(id, name) {
     onGround: false,
     airSince: 0,
     mode: 'air',
-    slideT: 0,
-    spawnIndex: 0,
-
     // wallrun state
-    wallSide: 0,                // -1 = left, +1 = right (relative to player)
-    wallLockUntilGround: false, // must touch ground before next run
     wasHoldingJump: false,      // edge detect if you ever add jump-press
     _wallrunBoostUsed: false,   // allow one outward boost per run
     // (no timer: run persists while conditions hold)
@@ -128,7 +123,7 @@ function makePlayer(id, name) {
 }
 
 function resolveCollisions(player, mapData) {
-  const height = player.mode === 'slide' ? 1.0 : P.HEIGHT
+  const height = P.HEIGHT
   const aabb = {
     min: [player.pos[0] - P.RADIUS, player.pos[1], player.pos[2] - P.RADIUS],
     max: [player.pos[0] + P.RADIUS, player.pos[1] + height, player.pos[2] + P.RADIUS]
@@ -180,7 +175,6 @@ function resolveCollisions(player, mapData) {
     }
   }
   player.onGround = onGround
-  if (onGround) player.wallLockUntilGround = false // reset “must touch ground” gate
 }
 
 function tryMantle(player, mapData) {
@@ -294,7 +288,8 @@ function doWallrun(p, inp, dt, mapData) {
   }
 
   // Figure out side: >0 means wall on RIGHT of player, <0 means LEFT
-  const fw = [Math.sin(p.yaw), 0, Math.cos(p.yaw)]
+  // Use the same forward convention as mantling (camera forward)
+  const fw = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
   const rt = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)]
   const sideDot = dot3(rt, hit.normal)
   const facingDot = Math.abs(dot3(fw, hit.normal)) // 1 = facing straight into wall
@@ -326,7 +321,6 @@ function doWallrun(p, inp, dt, mapData) {
   const wasOnGround = p.onGround
   p.mode = sideDot > 0 ? 'wallrunL' : 'wallrunR'
   p.onGround = false
-  p.wallSide = sideDot > 0 ? +1 : -1
 
   // If starting from ground, pop up slightly
   if (enterNow && p.airSince <= 0.02 && wasOnGround) {
@@ -353,7 +347,8 @@ function doWallrun(p, inp, dt, mapData) {
   const up = [0,10000,0]
   // tangent along wall from wall normal
   let along = norm3(cross(up, hit.normal))
-  if (dot3(along, fw) < 0) along = mul3(along, -1) // ensure forward
+  // Align along-the-wall direction with camera forward vector
+  if (dot3(along, fw) < 0) along = mul3(along, -1)
 
   // Blend velocity toward along-the-wall target while preserving (not reducing) existing forward momentum
   const planarBefore = [p.vel[0], 0, p.vel[2]]
@@ -557,9 +552,9 @@ function physicsStep(room, dt) {
 
     // Default mode if not in a special state
     if (p.onGround) {
-      if (!['mantle', 'slide', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'ground'
+      if (!['mantle', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'ground'
     } else {
-      if (!['mantle', 'slide', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'air'
+      if (!['mantle', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'air'
     }
 
     if (mantleSfx) io.to(room.code).emit('sfx', { kind: mantleSfx, id: p.id })
@@ -637,11 +632,8 @@ function startRound(room) {
     p.mode = 'air'
     p.onGround = false
     p.airSince = 0
-    p.wallSide = 0
-    p.wallLockUntilGround = false
     p._wallrunBoostUsed = false
     p.mantleT = 0; p.mantleFromY = 0; p.mantleToY = 0
-    p.spawnIndex = i
   })
   room.roundTime = TAG.ROUND_SECONDS
   room.intermission = false

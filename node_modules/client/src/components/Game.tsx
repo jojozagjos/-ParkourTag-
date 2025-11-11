@@ -43,9 +43,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       const kind = String(e?.kind ?? '').toLowerCase()
       const map: Record<string, string> = {
         jump: 'jump',
-        slide: 'slide',
         wallrun: 'wallrun',
-        walljump: 'walljump',
         mantle: 'mantle',
         land: 'land',
         tag: 'tag',
@@ -253,7 +251,8 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
 
   const STRAFE_TILT = 0.04
   const WALL_ROLL = 0.18
-  const SLIDE_PITCH = -0.08
+  // Removed slide mechanics; retain constant for potential future use placeholder
+  const SLIDE_PITCH = 0
 
   const LAND_KICK = -0.065
   const LAND_DIP_Y = -0.1
@@ -299,7 +298,7 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     fovRef.current += (targetFov - fovRef.current) * Math.min(1, dt * 2.5)
 
     // ---------- Bob / sway driver ----------
-    const groundedStrict = !!me.onGround || me.mode === 'ground' || me.mode === 'slide'
+    const groundedStrict = !!me.onGround || me.mode === 'ground'
     const disallowBob = me.mode === 'wallrunL' || me.mode === 'wallrunR' || me.mode === 'mantle'
     const canBob = groundedStrict && !disallowBob
 
@@ -334,9 +333,9 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     const targetBaseRoll = strafeRoll + modeRoll
     baseRoll.current += (targetBaseRoll - baseRoll.current) * Math.min(1, dt * 8)
 
-    // ---------- Slide pitch + landing effects ----------
+  // ---------- Landing effects ----------
     let pitchBias = 0
-    if (me.mode === 'slide') pitchBias += SLIDE_PITCH
+  // (slide removed)
 
     const wasMode = prevMode.current
     const wasOnG = prevOnG.current
