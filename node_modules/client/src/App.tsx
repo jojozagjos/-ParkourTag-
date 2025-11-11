@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useEffect, useState } from 'react'
+import './styles.css'
 import { io, Socket } from 'socket.io-client'
 import Menu from './components/Menu'
 import Lobby from './components/Lobby'

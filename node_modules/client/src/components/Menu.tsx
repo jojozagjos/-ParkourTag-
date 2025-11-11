@@ -9,17 +9,22 @@ export default function Menu({ socket }: { socket: Socket }) {
   function join() { if (joinCode) socket.emit('room:join', { code: joinCode.toUpperCase(), name }) }
 
   return (
-    <div style={{ display: 'grid', placeItems: 'center', height: '100%' }}>
+    <div className="menu-root">
+      <div className="bg-decor" />
       <div className="panel">
-        <h1 style={{ marginTop: 0 }}>Parkour Tag</h1>
-        <label style={{ display: 'block', marginBottom: 8 }}>Display name</label>
-        <input value={name} onChange={e => setName(e.target.value)} placeholder='Your name' style={{ width: '100%', marginBottom: 12 }} />
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={host}>Host</button>
-          <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder='Room code' style={{ flex: 1 }} />
-          <button onClick={join}>Join</button>
+        <h1>Parkour Tag</h1>
+        <div className="subtitle">Fast-paced wallruns &amp; chase. Host or join a lobby.</div>
+        <div style={{ marginBottom: 18 }}>
+          <label htmlFor="displayName">Display Name</label>
+          <input id="displayName" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" />
         </div>
-        <p style={{ opacity: 0.85, marginTop: 12 }}>Host creates a room. Others enter the code to join.</p>
+        <div className="actions" style={{ marginBottom: 6 }}>
+          <button onClick={host} title="Create a new lobby">Host</button>
+          <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Room code" maxLength={5} />
+          <button onClick={join} className="secondary" title="Join existing lobby">Join</button>
+        </div>
+        <div className="helper">Host to generate a 5‑character code. Give it to friends so they can join.<br />Use WASD + Space + Shift in game.</div>
+        <div className="footer-hint">v0.1 • Experimental movement playground</div>
       </div>
     </div>
   )
