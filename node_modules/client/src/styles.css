@@ -264,3 +264,32 @@ button.secondary:hover { background: rgba(255,255,255,0.18); }
 @media (max-width: 820px) {
   .lobby-body { grid-template-columns: 1fr; }
 }
+
+/* Intro screen */
+.intro-root {
+  position: fixed; inset: 0; z-index: 2500;
+  display: grid; place-items: center;
+  background: linear-gradient(160deg, var(--bg-grad-start), var(--bg-grad-end));
+}
+.intro-text {
+  font-size: clamp(24px, 5vw, 56px);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: linear-gradient(95deg, #fff, #c6d6ff 45%, #92b2ff);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  opacity: 0; transform: translateY(8px);
+  animation: introFade 1.4s ease forwards;
+}
+.intro-text.show { animation: introFade 1.4s ease forwards; }
+.intro-text.hide { opacity: 0; }
+@keyframes introFade {
+  0% { opacity: 0; transform: translateY(8px); }
+  20% { opacity: 1; transform: translateY(0); }
+  80% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+.intro-skip {
+  position: absolute; bottom: 20px; right: 22px; font-size: 0.75rem; opacity: 0.6; letter-spacing: 0.08em;
+}
+.intro-hit { position: absolute; inset: 0; }

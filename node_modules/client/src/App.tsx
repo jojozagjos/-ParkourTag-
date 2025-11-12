@@ -6,12 +6,12 @@ import Menu from './components/Menu'
 import Lobby from './components/Lobby'
 import Game from './components/Game'
 
-type Screen = 'menu' | 'lobby' | 'game'
+type Screen = 'intro' | 'menu' | 'lobby' | 'game'
 
 export type PlayerSummary = { id: string, name: string, ready: boolean, host: boolean }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('menu')
+  const [screen, setScreen] = useState<Screen>('intro')
   const [socket, setSocket] = useState<Socket | null>(null)
   const [roomCode, setRoomCode] = useState<string>('')
   const [players, setPlayers] = useState<PlayerSummary[]>([])
@@ -58,11 +58,38 @@ export default function App() {
 
   return (
     <div style={{ width: '100%', height: '100vh' }}>
+      {screen === 'intro' && <Intro onDone={() => setScreen('menu')} />}
       {screen === 'menu' && <Menu socket={socket} />}
       {screen === 'lobby' && (
         <Lobby socket={socket} roomCode={roomCode} players={players} selfId={selfId} maps={maps} mapName={mapName} voteCounts={voteCounts} />
       )}
       {screen === 'game' && <Game socket={socket} selfId={selfId} />}
+    </div>
+  )
+}
+
+function Intro({ onDone }: { onDone: () => void }) {
+  const [stage, setStage] = useState<0 | 1 | 2>(0)
+  useEffect(() => {
+    let t1 = window.setTimeout(() => setStage(1), 1700) // after first text fade-out move to second
+    let t2 = window.setTimeout(() => setStage(2), 3400) // after second text fade-out, proceed
+    let t3 = window.setTimeout(() => onDone(), 4800)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+  }, [onDone])
+
+  const text = stage === 0 ? 'made by joseph slade' : stage === 1 ? 'PARKOUR TAG' : ''
+
+  return (
+    <div className="intro-root">
+      <div className={`intro-text ${stage === 0 ? 'show' : stage === 1 ? 'show' : 'hide'}`}>{text}</div>
+      <div className="intro-skip">Press any key or click to skip</div>
+      <div
+        className="intro-hit"
+        onClick={onDone}
+        onKeyDown={onDone as any}
+        tabIndex={-1}
+        aria-hidden
+      />
     </div>
   )
 }
