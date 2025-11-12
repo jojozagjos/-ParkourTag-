@@ -538,6 +538,21 @@ function physicsStep(room, dt) {
     p.vel[0] += wishX * accel * dt
     p.vel[2] += wishZ * accel * dt
 
+    // Turn-brake: if desired direction opposes current planar velocity, apply an extra braking force
+    if (wishLen > 0.01) {
+      const dotWishVel = p.vel[0] * wishX + p.vel[2] * wishZ
+      if (dotWishVel < -0.01) {
+        const planarSpd = Math.hypot(p.vel[0], p.vel[2]) || 1
+        const bx = (p.vel[0] / planarSpd)
+        const bz = (p.vel[2] / planarSpd)
+        const brake = (P.TURN_BRAKE || 14.0) * dt
+        // Do not overshoot past zero
+        const mag = Math.min(planarSpd, brake)
+        p.vel[0] -= bx * mag
+        p.vel[2] -= bz * mag
+      }
+    }
+
     const spd = Math.hypot(p.vel[0], p.vel[2])
     if (spd > maxSpeed) {
       const s = maxSpeed / spd
@@ -705,10 +720,9 @@ function physicsStep(room, dt) {
 
     // Respawn if fallen below kill plane
     if (p.pos[1] < -40) {
-      // Choose a spawn by hashing id so it's stable
-      const ids = Object.keys(room.players)
-      const idx = ids.indexOf(p.id)
-      const spawn = pickSpawn(mapData, Math.max(0, idx))
+      // Choose a random spawn when respawning (avoid predictable clustering)
+      const sp = mapData.spawnPoints[Math.floor(Math.random() * mapData.spawnPoints.length)]
+      const spawn = [sp[0], sp[1], sp[2]]
       p.pos = [spawn[0], spawn[1], spawn[2]]
       p.vel = [0, 0, 0]
       p.mode = 'air'

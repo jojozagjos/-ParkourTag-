@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Socket } from 'socket.io-client'
 
-export default function MapVote({ socket, maps, current, voteCounts }:{ socket: Socket, maps: string[], current: string, voteCounts?: Record<string, number> }) {
+export default function MapVote({ socket, maps, current, voteCounts, inline }:{ socket: Socket, maps: string[], current: string, voteCounts?: Record<string, number>, inline?: boolean }) {
   const opts = useMemo(() => maps, [maps])
   const [highlight, setHighlight] = useState(0)
   const userChangedRef = useRef(false)
@@ -57,43 +57,48 @@ export default function MapVote({ socket, maps, current, voteCounts }:{ socket: 
     return best
   }, [voteCounts])
 
+  const content = (
+    <div style={{ maxWidth:inline ? 'unset' : 900, width: inline ? '100%' : '92%', padding:'20px 22px', borderRadius:14, background: inline ? 'transparent' : 'rgba(10,16,36,0.75)', border: inline ? 'none' : '1px solid #2a365e', boxShadow: inline ? 'none' : '0 8px 24px rgba(0,0,0,0.45)'}}>
+      <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:14 }}>
+        <h2 style={{ margin:0 }}>Vote next map</h2>
+        <div style={{ opacity:0.8, fontSize:13 }}>Press 1–9 or use arrows + Enter</div>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:12 }}>
+        {opts.map((m, i) => {
+          const count = voteCounts?.[m] || 0
+          const isCurrent = m === current
+          const isLeading = leading === m && count > 0
+          const isHi = i === highlight
+          return (
+            <button key={m} onClick={() => { userChangedRef.current = true; setHighlight(i); socket.emit('vote:map', { name:m }) }}
+              style={{
+                padding:'14px 16px', borderRadius:10, border:'1px solid #30407a', cursor:'pointer', textAlign:'left',
+                background: isHi ? '#1b2a5a' : (isCurrent ? '#122046' : '#0d1430'), color:'#fff',
+                position:'relative', minHeight:72,
+                outline: isHi ? '2px solid #3c5cff' : 'none'
+              }}
+              aria-label={`Vote ${m}`}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <div style={{ fontSize:16, fontWeight:600 }}>{m}</div>
+                <div style={{ opacity:0.8, fontSize:12 }}>[{i+1}]</div>
+              </div>
+              {count > 0 && <div style={{ position:'absolute', top:8, right:8, background:'#203c7a', padding:'2px 8px', borderRadius:12, fontSize:12 }}>{count}</div>}
+              {isLeading && <div style={{ position:'absolute', inset:0, borderRadius:10, boxShadow:'0 0 0 2px #3c5cff inset', pointerEvents:'none' }} />}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  if (inline) return content
   return (
     <div style={{
       position:'fixed', inset:0,
       background:'rgba(4,8,20,0.65)', display:'flex', alignItems:'center', justifyContent:'center',
       backdropFilter:'blur(6px)', zIndex: 900
     }}>
-      <div style={{ maxWidth:900, width:'92%', padding:'20px 22px', borderRadius:14, background:'rgba(10,16,36,0.75)', border:'1px solid #2a365e', boxShadow:'0 8px 24px rgba(0,0,0,0.45)'}}>
-        <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:14 }}>
-          <h2 style={{ margin:0 }}>Vote next map</h2>
-          <div style={{ opacity:0.8, fontSize:13 }}>Press 1–9 or use arrows + Enter</div>
-        </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:12 }}>
-          {opts.map((m, i) => {
-            const count = voteCounts?.[m] || 0
-            const isCurrent = m === current
-            const isLeading = leading === m && count > 0
-            const isHi = i === highlight
-            return (
-              <button key={m} onClick={() => { userChangedRef.current = true; setHighlight(i); socket.emit('vote:map', { name:m }) }}
-                style={{
-                  padding:'14px 16px', borderRadius:10, border:'1px solid #30407a', cursor:'pointer', textAlign:'left',
-                  background: isHi ? '#1b2a5a' : (isCurrent ? '#122046' : '#0d1430'), color:'#fff',
-                  position:'relative', minHeight:72,
-                  outline: isHi ? '2px solid #3c5cff' : 'none'
-                }}
-                aria-label={`Vote ${m}`}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                  <div style={{ fontSize:16, fontWeight:600 }}>{m}</div>
-                  <div style={{ opacity:0.8, fontSize:12 }}>[{i+1}]</div>
-                </div>
-                {count > 0 && <div style={{ position:'absolute', top:8, right:8, background:'#203c7a', padding:'2px 8px', borderRadius:12, fontSize:12 }}>{count}</div>}
-                {isLeading && <div style={{ position:'absolute', inset:0, borderRadius:10, boxShadow:'0 0 0 2px #3c5cff inset', pointerEvents:'none' }} />}
-              </button>
-            )
-          })}
-        </div>
-      </div>
+      {content}
     </div>
   )
 }

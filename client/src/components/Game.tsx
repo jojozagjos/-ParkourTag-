@@ -203,7 +203,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       </div>
 
   {snap && <Scoreboard scores={snap.scores} itId={snap.itId} players={snap.players} />}
-  <ResultsModal results={results} onDismiss={() => setResults(null)} />
+  <ResultsModal results={results} onDismiss={() => setResults(null)} socket={socket} maps={maps} current={snap?.mapName || mapName} voteCounts={voteCounts} />
   {/* Map vote shown only during intermission; now used for pre-game vote as well */}
       {snap?.intermission && maps.length > 0 && !results && (
         <MapVote socket={socket} maps={maps} current={snap.mapName} voteCounts={voteCounts} />
