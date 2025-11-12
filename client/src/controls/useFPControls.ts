@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { Socket } from 'socket.io-client'
 import type { InputState } from '../types'
+import { getSettings, isPaused } from '../state/settings'
 
 /**
  * First-person controls with pointer lock and full movement input,
@@ -13,12 +14,13 @@ export function useFPControls(socket: Socket) {
     yaw: 0, pitch: 0
   })
 
-  const sens = 0.0025
+  let sens = getSettings().sensitivity
   const pitchClamp = Math.PI / 2 * 0.95
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent, down: boolean) => {
       if (e.repeat) return
+      if (isPaused()) return
       switch (e.code) {
         case 'KeyW': case 'ArrowUp':     input.current.forward = down; break
         case 'KeyS': case 'ArrowDown':   input.current.back = down; break
@@ -26,7 +28,8 @@ export function useFPControls(socket: Socket) {
         case 'KeyD': case 'ArrowRight':  input.current.right = down; break
         case 'Space':                    input.current.jump = down; break
         case 'ShiftLeft': case 'ShiftRight': input.current.sprint = down; break
-        case 'ControlLeft': case 'ControlRight': input.current.crouch = down; break
+        // Remap crouch/slide to 'C' to avoid Ctrl+W closing tab
+        case 'KeyC': input.current.crouch = down; break
         default: return
       }
       socket.emit('input', { ...input.current })
@@ -34,9 +37,12 @@ export function useFPControls(socket: Socket) {
 
     const onMouseMove = (e: MouseEvent) => {
       if (document.pointerLockElement !== document.body) return
+      if (isPaused()) return
+      sens = getSettings().sensitivity
       // Invert horizontal movement so moving mouse right increases yaw positively
       input.current.yaw -= e.movementX * sens
-      input.current.pitch -= e.movementY * sens
+      const inv = getSettings().invertY ? -1 : 1
+      input.current.pitch -= e.movementY * sens * inv
       if (input.current.pitch > pitchClamp) input.current.pitch = pitchClamp
       if (input.current.pitch < -pitchClamp) input.current.pitch = -pitchClamp
       socket.emit('input', { ...input.current })

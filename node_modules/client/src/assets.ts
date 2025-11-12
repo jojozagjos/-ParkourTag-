@@ -13,6 +13,7 @@ export const SFX_URLS = {
 }
 
 const cache = new Map<string, HTMLAudioElement>()
+import { getSettings } from './state/settings'
 
 export function playSfx(name: keyof typeof SFX_URLS, volume = 0.6) {
   const url = SFX_URLS[name]
@@ -23,7 +24,8 @@ export function playSfx(name: keyof typeof SFX_URLS, volume = 0.6) {
     cache.set(url, a)
   }
   const inst = a.cloneNode(true) as HTMLAudioElement
-  inst.volume = volume
+  const master = Math.max(0, Math.min(1, getSettings().masterVolume ?? 1))
+  inst.volume = Math.max(0, Math.min(1, volume * master))
   inst.play().catch(() => {})
 }
 

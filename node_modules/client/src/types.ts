@@ -15,6 +15,10 @@ export type InputState = {
 export type NetPlayer = {
   id: string
   name: string
+  color?: string
+  face?: 'default' | 'smile' | 'sunglasses'
+  faceData?: string
+  hat?: 'none' | 'cap' | 'cone' | 'halo'
   pos: Vec3
   vel: Vec3
   yaw: number
@@ -32,6 +36,8 @@ export type Snapshot = {
   intermission: boolean
   mapName: string
   scores: Scores
+  state?: string
+  maps?: string[]
 }
 
 export type RoundResults = {

@@ -16,6 +16,9 @@ export default function App() {
   const [roomCode, setRoomCode] = useState<string>('')
   const [players, setPlayers] = useState<PlayerSummary[]>([])
   const [selfId, setSelfId] = useState<string>('')
+  const [maps, setMaps] = useState<string[]>([])
+  const [mapName, setMapName] = useState<string>('')
+  const [voteCounts, setVoteCounts] = useState<Record<string, number>>({})
 
   useEffect(() => {
     // Use same-origin in production; allow override during local dev via VITE_SERVER_URL
@@ -28,10 +31,21 @@ export default function App() {
     setSocket(s)
   s.on('connect', () => setSelfId(s.id ?? ''))
   s.on('connect_error', (err) => console.warn('socket connect_error', err && (err.message || err)))
-    s.on('lobby:update', (payload: { roomCode: string, players: PlayerSummary[] }) => {
+    s.on('lobby:update', (payload: { roomCode: string, players: PlayerSummary[], maps?: string[], mapName?: string }) => {
       setRoomCode(payload.roomCode)
       setPlayers(payload.players)
+      if (payload.maps) setMaps(payload.maps)
+      if (payload.mapName) setMapName(payload.mapName)
       setScreen('lobby')
+    })
+    s.on('vote:update', (payload: { votes: Record<string,string> }) => {
+      // Tally counts
+      const tally: Record<string, number> = {}
+      for (const v of Object.values(payload.votes)) {
+        if (!v) continue
+        tally[v] = (tally[v] || 0) + 1
+      }
+      setVoteCounts(tally)
     })
     s.on('game:started', () => setScreen('game'))
     s.on('disconnect', () => {
@@ -46,7 +60,7 @@ export default function App() {
     <div style={{ width: '100%', height: '100vh' }}>
       {screen === 'menu' && <Menu socket={socket} />}
       {screen === 'lobby' && (
-        <Lobby socket={socket} roomCode={roomCode} players={players} selfId={selfId} />
+        <Lobby socket={socket} roomCode={roomCode} players={players} selfId={selfId} maps={maps} mapName={mapName} voteCounts={voteCounts} />
       )}
       {screen === 'game' && <Game socket={socket} selfId={selfId} />}
     </div>

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { useMemo } from 'react'
+import { useLoader } from '@react-three/fiber'
 
 // Load maps from shared/maps using Vite glob so the bundler can find them at build time
 import mapIndex from '../../shared/maps/index.json'
@@ -19,21 +20,15 @@ function pickMapData(name?: string) {
 export type AABB = { min: [number, number, number], max: [number, number, number] }
 
 export function MapMeshes({ name }: { name?: string }) {
-  const loader = new THREE.TextureLoader()
-  const floorTx = useMemo(() => {
-    const t = loader.load(new URL('../assets/textures/floor_grid.png', import.meta.url).toString())
-    t.colorSpace = THREE.SRGBColorSpace
-    t.wrapS = t.wrapT = THREE.RepeatWrapping
-    t.repeat.set(10, 10)
-    return t
-  }, [])
-  const wallTx = useMemo(() => {
-    const t = loader.load(new URL('../assets/textures/wall_noise.png', import.meta.url).toString())
-    t.colorSpace = THREE.SRGBColorSpace
-    t.wrapS = t.wrapT = THREE.RepeatWrapping
-    t.repeat.set(4, 4)
-    return t
-  }, [])
+  const floorTx = useLoader(THREE.TextureLoader, new URL('../assets/textures/floor_grid.png', import.meta.url).toString())
+  const wallTx = useLoader(THREE.TextureLoader, new URL('../assets/textures/wall_noise.png', import.meta.url).toString())
+  // Configure textures (safe in render; R3F ensures it's set post-load)
+  floorTx.colorSpace = THREE.SRGBColorSpace
+  floorTx.wrapS = floorTx.wrapT = THREE.RepeatWrapping
+  floorTx.repeat.set(10, 10)
+  wallTx.colorSpace = THREE.SRGBColorSpace
+  wallTx.wrapS = wallTx.wrapT = THREE.RepeatWrapping
+  wallTx.repeat.set(4, 4)
 
   const matFloor = useMemo(() => new THREE.MeshStandardMaterial({ map: floorTx }), [floorTx])
   const matWall = useMemo(() => new THREE.MeshStandardMaterial({ map: wallTx }), [wallTx])

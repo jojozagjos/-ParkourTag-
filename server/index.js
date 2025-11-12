@@ -98,7 +98,6 @@ function listSummaries(room) {
     id: p.id, name: p.name, ready: p.ready, host: p.id === room.hostId
   }))
 }
-
 // ------------------ Player/Physics -----------------
 function makePlayer(id, name) {
   return {
@@ -106,6 +105,10 @@ function makePlayer(id, name) {
     pos: [0, 2.0, 0],
     vel: [0, 0, 0],
     yaw: 0, pitch: 0,
+    color: '#f0b46d',
+    face: 'smile',
+    hat: 'none',
+    faceData: null,
     onGround: false,
     airSince: 0,
     mode: 'air',
@@ -525,8 +528,8 @@ function physicsStep(room, dt) {
       p.vel[2] *= s
     }
 
-    // Ground friction
-    if (p.onGround) {
+    // Ground friction (skip while sliding to preserve momentum; slide has its own friction)
+    if (p.onGround && p.mode !== 'slide') {
       const baseFriction = P.FRICTION
       const frictionMul = isSprinting ? 0.6 : 1.0
       const friction = (wishLen > 0.01 ? baseFriction * 0.5 : baseFriction) * frictionMul * dt
@@ -592,6 +595,7 @@ function physicsStep(room, dt) {
     }
     if (p.mode === 'slide') {
       p.slideT -= dt
+      // Lower friction while sliding to keep speed; slide friction only applies when grounded
       const fr = Math.max(0, (P.SLIDE_FRICTION || 3.0) * dt)
       p.vel[0] *= Math.max(0, 1 - fr)
       p.vel[2] *= Math.max(0, 1 - fr)
@@ -703,13 +707,20 @@ function snapshot(room) {
     players: Object.values(room.players).map(p => ({
       id: p.id, name: p.name,
       pos: p.pos, vel: p.vel, yaw: p.yaw, pitch: p.pitch,
-      onGround: !!p.onGround, mode: p.mode
+      onGround: !!p.onGround, mode: p.mode,
+      color: p.color,
+      face: p.face,
+      hat: p.hat,
+      faceData: p.faceData
     })),
     itId: room.itId,
     roundTime: room.intermission ? room.intermissionTime : room.roundTime,
     intermission: room.intermission,
     mapName: room.mapName,
-    scores: room.scores
+    scores: room.scores,
+    state: room.state,
+    // Provide maps during any intermission (pre-vote and between rounds) so client can render voting UI.
+    maps: room.intermission ? mapList.options : undefined
   }
 }
 
@@ -756,6 +767,36 @@ function chooseNextMap(room) {
   }
   room.mapName = selected
   room.mapData = loadMap(room.mapName)
+}
+
+function startPreVote(code) {
+  const room = rooms[code]
+  if (!room) return
+  if (room.loop) clearInterval(room.loop)
+  // Use intermission fields to drive the countdown and reuse client UI
+  room.state = 'preVote'
+  room.results = null
+  room.intermission = true
+  room.intermissionTime = (typeof TAG.INTERMISSION_SECONDS === 'number' ? TAG.INTERMISSION_SECONDS : 10)
+  // Switch clients to game screen where MapVote is shown during intermission
+  io.to(code).emit('game:started')
+  room.loop = setInterval(() => {
+    const dt = DT
+    room.intermissionTime -= dt
+    if (room.intermissionTime <= 0) {
+      room.intermission = false
+      // Apply votes and lock pre-vote
+      chooseNextMap(room)
+      room.voting = false
+      // Transition into normal game loop
+      clearInterval(room.loop)
+      room.loop = null
+      startLoop(code)
+      return
+    }
+    io.to(code).emit('world:snapshot', snapshot(room))
+    // live vote tally is emitted on each vote: no need to emit here
+  }, 1000 * DT)
 }
 
 function startLoop(code) {
@@ -819,7 +860,8 @@ io.on('connection', (socket) => {
       mapData: loadMap(mapName),
       scores: {},
       results: null,
-      votes: {}
+      votes: {},
+      voting: true // enable pre-game voting
     }
     socket.join(code); joinedCode = code
     rooms[code].players[socket.id] = makePlayer(socket.id, name || 'Runner')
@@ -857,11 +899,15 @@ io.on('connection', (socket) => {
     if (!room) return
     if (socket.id !== room.hostId) return
     const readyCount = Object.values(room.players).filter(p => p.ready).length
-    if (readyCount >= Math.max(1, MIN_PLAYERS)) {
-      startLoop(joinedCode)
-    } else {
+    if (readyCount < Math.max(1, MIN_PLAYERS)) {
       io.to(socket.id).emit('game:startFailed', { reason: `Need at least ${MIN_PLAYERS} ready player(s) to start`, readyCount, min: MIN_PLAYERS })
+      return
     }
+    // If pre-game voting is desired, start a short vote phase before round 1
+    if (room.voting) {
+      return startPreVote(joinedCode)
+    }
+    startLoop(joinedCode)
   })
 
   socket.on('vote:map', ({ name }) => {
@@ -871,6 +917,26 @@ io.on('connection', (socket) => {
     if (!mapList.options.includes(name)) return
     room.votes[socket.id] = name
     io.to(joinedCode).emit('vote:update', { votes: room.votes })
+  })
+
+  socket.on('player:update', ({ name, color, face, hat, faceData }) => {
+    if (!joinedCode) return
+    const room = rooms[joinedCode]; if (!room) return
+    const p = room.players[socket.id]; if (!p) return
+    if (typeof name === 'string' && name.trim()) p.name = name.trim().slice(0, 24)
+    if (typeof color === 'string' && /^#([0-9a-fA-F]{6})$/.test(color)) p.color = color
+  const faces = new Set(['smile'])
+  const hats = new Set(['none','cap','cone','halo'])
+    if (typeof face === 'string' && faces.has(face)) p.face = face
+    if (typeof hat === 'string' && hats.has(hat)) p.hat = hat
+    if (typeof faceData === 'string' && faceData.startsWith('data:image/png;base64,')) {
+      // Basic size limit ~100KB to avoid huge payloads
+      if (faceData.length < 140000) p.faceData = faceData
+    }
+    // reflect to lobby
+    for (const s of Object.keys(room.players)) {
+      io.to(s).emit('lobby:update', { roomCode: joinedCode, players: listSummaries(room), maps: mapList.options, mapName: room.mapName })
+    }
   })
 
   socket.on('input', (input) => {
