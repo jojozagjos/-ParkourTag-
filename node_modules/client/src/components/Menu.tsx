@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Socket } from 'socket.io-client'
 import { getSettings, setSettings, subscribe, resetSettings } from '../state/settings'
-import { Canvas, useFrame, useLoader } from '@react-three/fiber'
+import { Canvas, useLoader } from '@react-three/fiber'
 import * as THREE from 'three'
 import constants from '../../../shared/constants.json'
 import faceTexturePath from '../../assets/textures/face.png'
@@ -129,6 +129,7 @@ export default function Menu({ socket }: { socket: Socket }) {
               </div>
               <div className="preview-wrap">
                 <AvatarPreview color={color} face={face} hat={hat} faceData={faceData} />
+                <div style={{ position:'absolute', bottom:10, right:14, fontSize:'0.7rem', letterSpacing:'0.08em', opacity:0.6, pointerEvents:'none', textTransform:'uppercase' }}>Click & Drag to Rotate</div>
               </div>
             </div>
           </section>
@@ -197,24 +198,15 @@ function AvatarPreview({ color, face, hat, faceData }: { color: string, face: 's
 function PreviewContent({ color, face, hat, faceData }: { color: string, face: 'smile', hat: 'none' | 'cap' | 'cone' | 'halo', faceData: string | null }) {
   const faceTexture = useLoader(THREE.TextureLoader, faceTexturePath)
   const group = useRef<THREE.Group>(null)
-  const autoSpin = useRef(true)
   const lastDragX = useRef<number | null>(null)
-  const idleTimer = useRef<number | null>(null)
-
-  useFrame((_, dt) => {
-    if (group.current && autoSpin.current) group.current.rotation.y += dt * 0.3
-  })
 
   function onPointerDown(e: any) {
-    autoSpin.current = false
     lastDragX.current = e.clientX
     ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId as any)
   }
   function onPointerUp(e: any) {
     lastDragX.current = null
     try { (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId as any) } catch {}
-    if (idleTimer.current) window.clearTimeout(idleTimer.current)
-    idleTimer.current = window.setTimeout(() => { autoSpin.current = true }, 2000) as any
   }
   function onPointerMove(e: any) {
     if (lastDragX.current == null || !group.current) return
@@ -336,11 +328,11 @@ function FacePainter({ initial, onChange, bodyColor }: { initial: string | null,
     const cnv = canvasRef.current!
     const ctx = cnv.getContext('2d')!
     const img = ctx.getImageData(0, 0, cnv.width, cnv.height)
-    let hasPixels = false
-    for (let i = 3; i < img.data.length; i += 4) { // check alpha channel only
-      if (img.data[i] !== 0) { hasPixels = true; break }
-    }
-    if (hasPixels) {
+    // Count non-transparent pixels to enforce a minimum draw threshold
+    let count = 0
+    for (let i = 3; i < img.data.length; i += 4) { if (img.data[i] !== 0) count++ }
+    const MIN_PIXELS = Math.floor(256 * 256 * 0.02) // ~2% coverage
+    if (count >= MIN_PIXELS) {
       const url = cnv.toDataURL('image/png')
       onChange(url)
     } else {

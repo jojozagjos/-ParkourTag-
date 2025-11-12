@@ -930,8 +930,9 @@ io.on('connection', (socket) => {
     if (typeof face === 'string' && faces.has(face)) p.face = face
     if (typeof hat === 'string' && hats.has(hat)) p.hat = hat
     if (typeof faceData === 'string' && faceData.startsWith('data:image/png;base64,')) {
-      // Basic size limit ~100KB to avoid huge payloads
-      if (faceData.length < 140000) p.faceData = faceData
+      // Accept only reasonably-sized images (>2KB and <100KB) to avoid tiny 1px spam and huge payloads
+      if (faceData.length > 2000 && faceData.length < 140000) p.faceData = faceData
+      else if (faceData.length <= 2000) p.faceData = null
     }
     // reflect to lobby
     for (const s of Object.keys(room.players)) {
