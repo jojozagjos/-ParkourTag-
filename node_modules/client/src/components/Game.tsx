@@ -13,6 +13,7 @@ import { pulseScreen } from '../sfx'
 import { playSfx } from '../assets'
 import Skybox from './Skybox'
 import { TextureLoader } from 'three'
+import { rememberMany } from '../nameRegistry'
 // Import the face texture so Vite copies it into dist; absolute /assets paths were not bundled.
 import faceTexturePath from '../../assets/textures/face.png'
 import constants from '../../../shared/constants.json'
@@ -29,6 +30,8 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
   // Socket listeners with stable refs for proper cleanup
   useEffect(() => {
     const onSnap = (s: Snapshot) => {
+      // Update name registry to ensure HUDs can always resolve names
+      try { rememberMany(s.players.map(p => ({ id: p.id, name: p.name }))) } catch {}
       bufferRef.current.push(s)
     }
 
@@ -37,9 +40,12 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
     // New round started: clear any previous results modal
     const onGameStarted = () => setResults(null)
 
-    const onLobbyUpdate = (p: { maps?: string[]; mapName?: string }) => {
+    const onLobbyUpdate = (p: { maps?: string[]; mapName?: string; players?: Array<{ id: string; name: string }> }) => {
       if (p?.maps) setMaps(p.maps)
       if (p?.mapName) setMapName(p.mapName)
+      if (Array.isArray(p?.players)) {
+        try { rememberMany(p.players) } catch {}
+      }
     }
 
     const onSfx = (e: { kind?: string; id?: string; target?: string }) => {
@@ -137,7 +143,8 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           />
           {/* Secondary rim light to lift silhouettes */}
           <directionalLight position={[-10, 12, -8]} intensity={0.6} color={'#b8d4ff'} />
-          <MapMeshes />
+          <PreloadAssets />
+          <MapMeshes name={snap?.mapName || mapName} />
           {snap?.players.map(p => (
             <Avatar key={p.id} p={p} isSelf={p.id === selfId} isIt={snap?.itId === p.id} />
           ))}
@@ -156,7 +163,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
         <div style={{ marginTop: 8 }}>Click to lock mouse</div>
       </div>
 
-      {snap && <Scoreboard scores={snap.scores} itId={snap.itId} />}
+  {snap && <Scoreboard scores={snap.scores} itId={snap.itId} players={snap.players} />}
       <ResultsModal results={results} />
       {snap?.intermission && <MapVote socket={socket} maps={maps} current={snap.mapName} />}
     </>
@@ -210,7 +217,7 @@ const Avatar = memo(function Avatar({
           </mesh>
           <mesh position={[0, faceY, -0.36]} rotation={[0, Math.PI, 0]}>
             {faceGeom}
-            <meshBasicMaterial map={faceTexture} transparent />
+            <meshBasicMaterial map={faceTexture} transparent side={THREE.DoubleSide} />
           </mesh>
         </>
       )}
@@ -244,12 +251,13 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
 
   // Landing vertical dip (positional)
   const landY = useRef(0) // additive to camera.position.y
-  // Slide vertical offset (smooth crouch depth + gentle bob)
-  const slideY = useRef(0)
-  const slideBobPhase = useRef(0)
+  const eyeYOffset = useRef(0) // slide/crouch lowers the eye height smoothly
+  const slideBobY = useRef(0) // gentle vertical oscillation during slide
+  const slidePhase = useRef(0)
 
   // Tunables
   const EYE_HEIGHT = 1.62
+  const EYE_HEIGHT_SLIDE = 1.28
   const BASE_FOV = 80
   const MAX_FOV = 96
   const SPEED_FOV_GAIN = 0.14
@@ -268,9 +276,9 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
   const LAND_KICK = -0.065
   const LAND_DIP_Y = -0.1
   const LAND_RECOVER = 10.0
-  const SLIDE_Y_TARGET = -0.38
+  // Slide bob parameters (slow, subtle)
   const SLIDE_BOB_AMP = 0.05
-  const SLIDE_BOB_FREQ = 0.8
+  const SLIDE_BOB_FREQ = 0.9
 
   useEffect(() => {
     if (!me) return
@@ -293,7 +301,18 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
 
     // ---------- Authoritative position (no positional bob) ----------
     const eyeX = me.pos[0]
-  const eyeY = me.pos[1] + EYE_HEIGHT
+    // Smoothly ease eye height towards crouched height when sliding
+    const targetEyeOffset = me.mode === 'slide' ? (EYE_HEIGHT_SLIDE - EYE_HEIGHT) : 0
+    eyeYOffset.current += (targetEyeOffset - eyeYOffset.current) * Math.min(1, dt * 8)
+    // Slide bob: slow up/down while in slide, decay otherwise
+    if (me.mode === 'slide') {
+      slidePhase.current += dt * SLIDE_BOB_FREQ * Math.PI * 2
+      const targetBob = SLIDE_BOB_AMP * Math.sin(slidePhase.current)
+      slideBobY.current += (targetBob - slideBobY.current) * Math.min(1, dt * 6)
+    } else {
+      slideBobY.current += (0 - slideBobY.current) * Math.min(1, dt * 5)
+    }
+    const eyeY = me.pos[1] + EYE_HEIGHT + eyeYOffset.current
     const eyeZ = me.pos[2]
     camera.position.x += (eyeX - camera.position.x) * Math.min(1, dt * 10)
     camera.position.y += (eyeY - camera.position.y) * Math.min(1, dt * 12)
@@ -347,7 +366,7 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     const targetBaseRoll = strafeRoll + modeRoll
     baseRoll.current += (targetBaseRoll - baseRoll.current) * Math.min(1, dt * 8)
 
-  // ---------- Slide pitch + landing effects ----------
+    // ---------- Slide pitch + landing effects ----------
     let pitchBias = 0
     if (me.mode === 'slide') pitchBias += SLIDE_PITCH
 
@@ -379,21 +398,6 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
       if (Math.abs(landY.current) < 1e-4) landY.current = 0
     }
 
-    // ---------- Slide vertical offset (smooth crouch depth + slow bob) ----------
-  const slideTarget = me.mode === 'slide' ? SLIDE_Y_TARGET : 0
-  const slideK = Math.min(1, dt * 8)
-  slideY.current += (slideTarget - slideY.current) * slideK
-    // gentle slow bob only while actually sliding and moving
-    if (me.mode === 'slide') {
-      const speed = Math.hypot(me.vel[0], me.vel[2])
-      const bobAmp = Math.min(1, speed / 8) * SLIDE_BOB_AMP
-      slideBobPhase.current += dt * SLIDE_BOB_FREQ * Math.PI * 2
-      slideY.current += Math.sin(slideBobPhase.current) * bobAmp * dt // integrate small wobble for smoothness
-    } else {
-      // reset phase slowly when not sliding
-      slideBobPhase.current *= Math.max(0, 1 - dt * 2)
-    }
-
     // ---------- Compose final orientation ----------
     camera.rotation.order = 'YXZ'
     camera.rotation.y = baseYawRef.current + swayYaw.current
@@ -401,11 +405,26 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     camera.rotation.z = baseRoll.current + swayRoll.current
 
     // Apply landing vertical dip after positional smoothing so it is visible
-    camera.position.y += landY.current + slideY.current
+  camera.position.y += landY.current + slideBobY.current
 
     ;(camera as any).fov = fovRef.current
     camera.updateProjectionMatrix()
   })
 
+  return null
+}
+
+// Preload core textures so new joiners see assets immediately
+function PreloadAssets() {
+  // These imports ensure Vite includes the assets and useLoader caches them
+  const urls = useMemo(
+    () => [
+      faceTexturePath,
+      new URL('../../assets/textures/floor_grid.png', import.meta.url).toString(),
+      new URL('../../assets/textures/wall_noise.png', import.meta.url).toString()
+    ],
+    []
+  )
+  useLoader(TextureLoader, urls)
   return null
 }

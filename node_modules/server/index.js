@@ -182,6 +182,28 @@ function resolveCollisions(player, mapData) {
   player.onGround = onGround
 }
 
+// Check if there is enough vertical headroom to stand upright at current XZ.
+// Returns true if no obstacle intersects the additional head region between current height and full standing height.
+function hasHeadClearance(player, mapData) {
+  const currentHeight = player.mode === 'slide' ? Math.max(1.0, P.HEIGHT - 0.6) : P.HEIGHT
+  if (currentHeight >= P.HEIGHT - 1e-4) return true
+  const headMinY = player.pos[1] + currentHeight
+  const headMaxY = player.pos[1] + P.HEIGHT
+  const aabb = {
+    min: [player.pos[0] - P.RADIUS, headMinY, player.pos[2] - P.RADIUS],
+    max: [player.pos[0] + P.RADIUS, headMaxY, player.pos[2] + P.RADIUS]
+  }
+  for (const b of mapData.aabbs) {
+    // Expand obstacle by radius in X/Z only
+    const e = {
+      min: [b.min[0] - P.RADIUS, b.min[1], b.min[2] - P.RADIUS],
+      max: [b.max[0] + P.RADIUS, b.max[1], b.max[2] + P.RADIUS]
+    }
+    if (aabbOverlap(aabb, e)) return false
+  }
+  return true
+}
+
 function tryMantle(player, mapData) {
   // Use camera forward; previous sign caused mantling to work when facing away
   const forward = [-Math.sin(player.yaw), 0, -Math.cos(player.yaw)]
@@ -218,27 +240,6 @@ function sub3(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]] }
 function mul3(a,s){ return [a[0]*s,a[1]*s,a[2]*s] }
 function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]] }
 function projOnPlane(v, n){ const vn = dot3(v,n); return sub3(v, mul3(n, vn)) }
-
-// Check if there is vertical clearance above the player's current top to stand at full height
-function hasHeadroom(player, mapData) {
-  const R = P.RADIUS
-  const standH = P.HEIGHT
-  const curH = player.mode === 'slide' ? Math.max(1.0, P.HEIGHT - 0.6) : P.HEIGHT
-  if (curH >= standH - 1e-3) return true
-  const aabb = {
-    min: [player.pos[0] - R, player.pos[1] + curH - 1e-5, player.pos[2] - R],
-    max: [player.pos[0] + R, player.pos[1] + standH,        player.pos[2] + R]
-  }
-  for (const b of mapData.aabbs) {
-    // Expand obstacles in XZ by radius for capsule approximation
-    const e = {
-      min: [b.min[0] - R, b.min[1], b.min[2] - R],
-      max: [b.max[0] + R, b.max[1], b.max[2] + R]
-    }
-    if (aabbOverlap(aabb, e)) return false
-  }
-  return true
-}
 
 // -------- Robust wall proximity (touching only) --------
 /** Nearest vertical face to capsule edge at torso height.
@@ -568,9 +569,10 @@ function physicsStep(room, dt) {
 
     // Consume buffered jump if allowed (ground or coyote)
     if ((p.onGround || (p.airSince || 0) <= P.COYOTE_TIME) && p.jumpBufferedT > 0 && !mantleSfx) {
-      // Don't allow jumping if there is no headroom to prevent clipping
-      if (!hasHeadroom(p, mapData)) {
-        // keep buffer a bit longer so it can trigger once clear (do not consume this tick)
+      // Block jumping if there isn't enough headroom to stand
+      if (!hasHeadClearance(p, mapData)) {
+        // Keep buffer briefly so the player can jump right after clearing headroom
+        // but avoid infinite buffering; we already decay jumpBufferedT below
       } else {
       p.jumpBufferedT = 0
       p.vel[1] = P.JUMP_VELOCITY
@@ -593,15 +595,16 @@ function physicsStep(room, dt) {
       const fr = Math.max(0, (P.SLIDE_FRICTION || 3.0) * dt)
       p.vel[0] *= Math.max(0, 1 - fr)
       p.vel[2] *= Math.max(0, 1 - fr)
-      // Remain sliding while crouch held OR headroom unavailable
-      const headroom = hasHeadroom(p, mapData)
-      const canContinue = (inp.crouch || !headroom) && p.onGround && p.slideT > 0
-      if (!canContinue) {
-        if (headroom) {
+      // Try to exit slide if conditions say so, but only if there is headroom to stand
+      const wantExit = (!p.onGround || !inp.crouch || p.slideT <= 0)
+      if (wantExit) {
+        if (hasHeadClearance(p, mapData)) {
           p.mode = p.onGround ? 'ground' : 'air'
         } else {
-          // force remain crouched by resetting slideT softly so player stays low until clear
-          p.slideT = Math.max(p.slideT, 0.08)
+          // stay in slide while blocked by ceiling
+          p.mode = 'slide'
+          // prevent accumulation of slide timer negative values
+          if (p.slideT < -0.1) p.slideT = -0.1
         }
       }
     }
@@ -831,6 +834,8 @@ io.on('connection', (socket) => {
     if (!room) { socket.emit('error', 'Room not found'); return }
     socket.join(code); joinedCode = code
     room.players[socket.id] = makePlayer(socket.id, name || 'Runner')
+    // Ensure scoreboard shows the new player immediately
+    room.scores[socket.id] = room.scores[socket.id] || 0
     for (const s of Object.keys(room.players)) {
       io.to(s).emit('lobby:update', { roomCode: code, players: listSummaries(room), maps: mapList.options, mapName: room.mapName })
     }

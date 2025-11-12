@@ -10,11 +10,15 @@ for (const k of Object.keys(ctx)) {
   const name = k.split('/').pop()!.replace('.json', '')
   maps[name] = ctx[k]
 }
-const mapData = maps[(mapIndex as any).default] || maps[Object.keys(maps)[0]]
+function pickMapData(name?: string) {
+  if (name && maps[name]) return maps[name]
+  const def = (mapIndex as any).default
+  return maps[def] || maps[Object.keys(maps)[0]]
+}
 
 export type AABB = { min: [number, number, number], max: [number, number, number] }
 
-export function MapMeshes() {
+export function MapMeshes({ name }: { name?: string }) {
   const loader = new THREE.TextureLoader()
   const floorTx = useMemo(() => {
     const t = loader.load(new URL('../assets/textures/floor_grid.png', import.meta.url).toString())
@@ -33,6 +37,7 @@ export function MapMeshes() {
 
   const matFloor = useMemo(() => new THREE.MeshStandardMaterial({ map: floorTx }), [floorTx])
   const matWall = useMemo(() => new THREE.MeshStandardMaterial({ map: wallTx }), [wallTx])
+  const mapData = useMemo(() => pickMapData(name), [name])
 
   return (
     <group>
