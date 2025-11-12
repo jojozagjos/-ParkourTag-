@@ -114,6 +114,7 @@ function makePlayer(id, name) {
     mode: 'air',
     // slide
     slideT: 0,
+  slideCd: 0,
     crouchSince: 0,
     // jump buffer & tic-tac
     jumpBufferedT: 0,
@@ -486,7 +487,12 @@ function pickSpawn(mapData, i) {
 }
 function selectInitialIt(room) {
   const ids = Object.keys(room.players)
-  room.itId = ids.length ? ids[Math.floor(Math.random() * ids.length)] : null
+  let choices = ids
+  if (ids.length > 1 && room.prevItId && ids.includes(room.prevItId)) {
+    choices = ids.filter(id => id !== room.prevItId)
+  }
+  room.itId = choices.length ? choices[Math.floor(Math.random() * choices.length)] : null
+  room.prevItId = room.itId
   room.tagCooldown = TAG.COOLDOWN
 }
 
@@ -619,7 +625,7 @@ function physicsStep(room, dt) {
     // Start slide if criteria met
     if (p.onGround) {
       const planar = Math.hypot(p.vel[0], p.vel[2])
-      if (inp.crouch && planar >= P.SLIDE_SPEED_MIN && p.mode !== 'slide') {
+      if (inp.crouch && planar >= P.SLIDE_SPEED_MIN && p.mode !== 'slide' && (p.slideCd || 0) <= 0) {
         const slideHeight = Math.max(1.0, P.HEIGHT - 0.6)
         const clearance = overheadClearance(p, mapData)
         // Require enough space above feet for slide body (avoid sliding into tiny gaps)
@@ -645,15 +651,18 @@ function physicsStep(room, dt) {
       if (clearance !== Infinity && clearance < (P.MIN_SLIDE_CLEARANCE || slideHeight + 0.05)) {
         p.mode = 'crouch'
         p.slideT = 0
+        p.slideCd = Math.max(p.slideCd || 0, (P.SLIDE_COOLDOWN || 0.7))
       }
       // Try to exit slide if conditions say so, but only if there is headroom to stand
       const wantExit = (!p.onGround || !inp.crouch || p.slideT <= 0)
       if (wantExit) {
         if (hasHeadClearance(p, mapData)) {
           p.mode = p.onGround ? 'ground' : 'air'
+          p.slideCd = Math.max(p.slideCd || 0, (P.SLIDE_COOLDOWN || 0.7))
         } else {
           // Transition into crouch (slow walk) if blocked overhead after slide
           p.mode = 'crouch'
+          p.slideCd = Math.max(p.slideCd || 0, (P.SLIDE_COOLDOWN || 0.7))
           p.crouchSince = (p.crouchSince || 0) + dt
         }
       }
@@ -691,6 +700,7 @@ function physicsStep(room, dt) {
   else p.airSince = (p.airSince || 0) + dt
   p.jumpBufferedT = Math.max(0, p.jumpBufferedT - dt)
   p.tictacCd = Math.max(0, (p.tictacCd || 0) - dt)
+  p.slideCd = Math.max(0, (p.slideCd || 0) - dt)
 
     // Allow mantling while falling: if holding jump and moving downward near a ledge, attempt a catch
     // This makes catching an edge while dropping easier than the short jump-edge coyote window
@@ -914,6 +924,7 @@ io.on('connection', (socket) => {
       state: 'lobby',
       players: {},
       itId: null,
+      prevItId: null,
       tagCooldown: 0,
       roundTime: 0,
       intermission: false,

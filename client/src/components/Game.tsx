@@ -11,6 +11,7 @@ import MapVote from './MapVote'
 import { SnapshotBuffer } from './interp'
 import { pulseScreen } from '../sfx'
 import { playSfx } from '../assets'
+import { initPositionalAudio, playSfx3D } from '../audio/positional'
 import Skybox from './Skybox'
 import { TextureLoader } from 'three'
 import { rememberMany } from '../nameRegistry'
@@ -52,7 +53,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       }
     }
 
-  const onSfx = (e: { kind?: string; id?: string; target?: string }) => {
+    const onSfx = (e: { kind?: string; id?: string; target?: string }) => {
       const kind = String(e?.kind ?? '').toLowerCase()
       const map: Record<string, string> = {
         jump: 'jump',
@@ -66,10 +67,39 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
         round_end: 'round_end'
       }
       const key = map[kind] || 'jump'
-      try {
-        playSfx(key as any)
-      } catch {
-        /* ignore */
+      // If we can locate the player who caused the sound, play 3D with basic occlusion; otherwise fallback
+  const sampled = bufferRef.current.sample()
+  const actor = sampled?.players.find((p: NetPlayer) => p.id === (e.id || e.target))
+      if (actor) {
+        // naive occlusion: check if any AABB is strictly between camera and source; if so set occluded
+        let occluded = false
+        try {
+          const mapData = pickMapData(snap?.mapName || mapName)
+          if (mapData && Array.isArray(mapData.aabbs)) {
+            const cam = (document as any).__r3f?.root?.getState?.().camera
+            if (cam) {
+              const A = new THREE.Vector3(cam.position.x, cam.position.y, cam.position.z)
+              const B = new THREE.Vector3(actor.pos[0], actor.pos[1]+1.4, actor.pos[2])
+              const dir = new THREE.Vector3().subVectors(B, A)
+              const len = dir.length() || 1
+              dir.normalize()
+              // sample a few points along the segment and see if they are inside any obstacle horizontally at sampled height
+              const steps = 10
+              const R = (constants.PLAYER?.RADIUS ?? 0.35)
+              outer: for (let i = 1; i < steps; i++) {
+                const t = i / steps
+                const Pnt = new THREE.Vector3().copy(A).addScaledVector(dir, len * t)
+                for (const b of mapData.aabbs) {
+                  // expand by radius to be conservative
+                  if (Pnt.x >= b.min[0]-R && Pnt.x <= b.max[0]+R && Pnt.z >= b.min[2]-R && Pnt.z <= b.max[2]+R && Pnt.y >= b.min[1] && Pnt.y <= b.max[1]) { occluded = true; break outer }
+                }
+              }
+            }
+          }
+        } catch {}
+        playSfx3D(key as any, { position: [actor.pos[0], actor.pos[1]+1.2, actor.pos[2]], volume: 0.8, occluded })
+      } else {
+        try { playSfx(key as any) } catch {}
       }
       if (kind === 'jump') fxPulse('--jump', 0.7)
       if (kind === 'tag') fxPulse('--hit', 1.0)
@@ -356,6 +386,7 @@ const Avatar = memo(function Avatar({ p, isSelf, isIt }: { p: NetPlayer; isSelf:
  */
 function FPCamera({ me, inputRef, mapName }: { me: NetPlayer | null; inputRef: React.RefObject<InputState>; mapName?: string }) {
   const { camera } = useThree()
+  useEffect(() => { try { initPositionalAudio(camera) } catch {} }, [camera])
 
   // Persistent bases (no FX applied here)
   const baseYawRef = useRef(0)

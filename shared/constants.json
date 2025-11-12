@@ -5,17 +5,18 @@
     "RADIUS": 0.35,
     "HEIGHT": 1.8,
     "EYE_HEIGHT": 1.62,
-  "MOVE_ACCEL": 32.0,
-  "AIR_ACCEL": 18.0,
+    "MOVE_ACCEL": 32.0,
+    "AIR_ACCEL": 18.0,
     "MAX_SPEED": 8.5,
     "SPRINT_MULT": 1.25,
-  "FRICTION": 5.0,
-  "TURN_BRAKE": 14.0,
+    "FRICTION": 5.0,
+    "TURN_BRAKE": 14.0,
     "GRAVITY": 22.0,
     "JUMP_VELOCITY": 7.5,
     "SLIDE_SPEED_MIN": 5.5,
     "SLIDE_FRICTION": 1.2,
     "SLIDE_DURATION": 1.2,
+    "SLIDE_COOLDOWN": 0.7,
     "WALLRUN_GRAVITY": 5.0,
     "WALLRUN_SPEED": 7.5,
     "WALLRUN_DURATION": 1.2,
@@ -39,6 +40,6 @@
     ,
   "SCORE": {
     "SURVIVE_PER_SEC": 1,
-    "TAG_SUCCESS": 50
+    "TAG_SUCCESS": 20
   }
 }
