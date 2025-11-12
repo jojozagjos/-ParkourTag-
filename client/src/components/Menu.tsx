@@ -16,6 +16,8 @@ export default function Menu({ socket }: { socket: Socket }) {
   const [screen, setScreen] = useState<'home' | 'customize' | 'settings'>('home')
   useEffect(() => {
     try {
+      const n = localStorage.getItem('playerName')
+      if (n && typeof n === 'string') setName(n.slice(0,24))
       const s = localStorage.getItem('playerColor')
       if (s) setColor(s)
   const f = localStorage.getItem('playerFace')
@@ -26,6 +28,14 @@ export default function Menu({ socket }: { socket: Socket }) {
       if (fd && fd.startsWith('data:image/png')) setFaceData(fd)
     } catch {}
   }, [])
+
+  function saveName(v: string) {
+    const trimmed = v.slice(0, 24)
+    setName(trimmed)
+    try { localStorage.setItem('playerName', trimmed) } catch {}
+    // If connected to a room, server will accept this; otherwise it's ignored harmlessly
+    socket.emit('player:update', { name: trimmed })
+  }
 
   function host() { socket.emit('room:create', { name }); socket.emit('player:update', { name, color, face, hat, faceData }) }
   function join() { if (joinCode) { socket.emit('room:join', { code: joinCode.toUpperCase(), name }); socket.emit('player:update', { name, color, face, hat, faceData }) } }
@@ -86,7 +96,7 @@ export default function Menu({ socket }: { socket: Socket }) {
             <div className="section-body">
               <div className="field-group">
                 <label htmlFor="displayName">Display Name</label>
-                <input id="displayName" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" />
+                <input id="displayName" value={name} onChange={e => saveName(e.target.value)} placeholder="Your name" maxLength={24} />
               </div>
               <div className="actions" style={{ marginTop: 6 }}>
                 <button onClick={host} title="Create a new lobby">Host</button>
