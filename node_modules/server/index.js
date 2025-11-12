@@ -109,6 +109,11 @@ function makePlayer(id, name) {
     onGround: false,
     airSince: 0,
     mode: 'air',
+    // slide
+    slideT: 0,
+    // jump buffer & tic-tac
+    jumpBufferedT: 0,
+    tictacCd: 0,
     // wallrun state
     wasHoldingJump: false,      // edge detect if you ever add jump-press
     _wallrunBoostUsed: false,   // allow one outward boost per run
@@ -123,7 +128,7 @@ function makePlayer(id, name) {
 }
 
 function resolveCollisions(player, mapData) {
-  const height = P.HEIGHT
+  const height = player.mode === 'slide' ? Math.max(1.0, P.HEIGHT - 0.6) : P.HEIGHT
   const aabb = {
     min: [player.pos[0] - P.RADIUS, player.pos[1], player.pos[2] - P.RADIUS],
     max: [player.pos[0] + P.RADIUS, player.pos[1] + height, player.pos[2] + P.RADIUS]
@@ -213,6 +218,27 @@ function sub3(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]] }
 function mul3(a,s){ return [a[0]*s,a[1]*s,a[2]*s] }
 function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]] }
 function projOnPlane(v, n){ const vn = dot3(v,n); return sub3(v, mul3(n, vn)) }
+
+// Check if there is vertical clearance above the player's current top to stand at full height
+function hasHeadroom(player, mapData) {
+  const R = P.RADIUS
+  const standH = P.HEIGHT
+  const curH = player.mode === 'slide' ? Math.max(1.0, P.HEIGHT - 0.6) : P.HEIGHT
+  if (curH >= standH - 1e-3) return true
+  const aabb = {
+    min: [player.pos[0] - R, player.pos[1] + curH - 1e-5, player.pos[2] - R],
+    max: [player.pos[0] + R, player.pos[1] + standH,        player.pos[2] + R]
+  }
+  for (const b of mapData.aabbs) {
+    // Expand obstacles in XZ by radius for capsule approximation
+    const e = {
+      min: [b.min[0] - R, b.min[1], b.min[2] - R],
+      max: [b.max[0] + R, b.max[1], b.max[2] + R]
+    }
+    if (aabbOverlap(aabb, e)) return false
+  }
+  return true
+}
 
 // -------- Robust wall proximity (touching only) --------
 /** Nearest vertical face to capsule edge at torso height.
@@ -511,13 +537,72 @@ function physicsStep(room, dt) {
     let mantleSfx = null
     const jumpPressEdge = !!inp.jump && !p.wasHoldingJump
     if (jumpPressEdge) {
+      // set buffer timer
+      p.jumpBufferedT = P.JUMP_BUFFER
       const canMantle = p.onGround || ((p.airSince || 0) < 0.25)
-      if (canMantle) {
-        mantleSfx = tryMantle(p, mapData)
+      if (canMantle) mantleSfx = tryMantle(p, mapData)
+      // Tic-tac attempt (air, near wall, not wallrunning)
+      if (!p.onGround && !mantleSfx && p.tictacCd <= 0) {
+        const hit = nearestWall(p, mapData)
+        if (hit && p.mode !== 'wallrunL' && p.mode !== 'wallrunR') {
+          const along = norm3(cross([0,1,0], hit.normal))
+          const fw = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
+          // Combine outward + forward-ish tangent
+          const outward = mul3(hit.normal, -1)
+          let dir = norm3([
+            outward[0] * 0.6 + along[0] * 0.4 + fw[0] * 0.2,
+            0,
+            outward[2] * 0.6 + along[2] * 0.4 + fw[2] * 0.2
+          ])
+          const force = (P.WALLJUMP_FORCE || 8.5) * 0.65
+          p.vel[0] = dir[0] * force
+          p.vel[2] = dir[2] * force
+          p.vel[1] = Math.max(p.vel[1], P.JUMP_VELOCITY * 0.7)
+          p.tictacCd = P.TICTAC_COOLDOWN
+          io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
+          // consume buffer since we used jump
+          p.jumpBufferedT = 0
+        }
       }
-      if (p.onGround && !mantleSfx) {
-        p.vel[1] = P.JUMP_VELOCITY
-        p.onGround = false
+    }
+
+    // Consume buffered jump if allowed (ground or coyote)
+    if ((p.onGround || (p.airSince || 0) <= P.COYOTE_TIME) && p.jumpBufferedT > 0 && !mantleSfx) {
+      // Don't allow jumping if there is no headroom to prevent clipping
+      if (!hasHeadroom(p, mapData)) {
+        // keep buffer a bit longer so it can trigger once clear (do not consume this tick)
+      } else {
+      p.jumpBufferedT = 0
+      p.vel[1] = P.JUMP_VELOCITY
+      p.onGround = false
+      io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
+      }
+    }
+
+    // Start slide if criteria met
+    if (p.onGround) {
+      const planar = Math.hypot(p.vel[0], p.vel[2])
+      if (inp.crouch && planar >= P.SLIDE_SPEED_MIN && p.mode !== 'slide') {
+        p.mode = 'slide'
+        p.slideT = P.SLIDE_DURATION
+        io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
+      }
+    }
+    if (p.mode === 'slide') {
+      p.slideT -= dt
+      const fr = Math.max(0, (P.SLIDE_FRICTION || 3.0) * dt)
+      p.vel[0] *= Math.max(0, 1 - fr)
+      p.vel[2] *= Math.max(0, 1 - fr)
+      // Remain sliding while crouch held OR headroom unavailable
+      const headroom = hasHeadroom(p, mapData)
+      const canContinue = (inp.crouch || !headroom) && p.onGround && p.slideT > 0
+      if (!canContinue) {
+        if (headroom) {
+          p.mode = p.onGround ? 'ground' : 'air'
+        } else {
+          // force remain crouched by resetting slideT softly so player stays low until clear
+          p.slideT = Math.max(p.slideT, 0.08)
+        }
       }
     }
 
@@ -532,9 +617,11 @@ function physicsStep(room, dt) {
     // Collisions & ground
     resolveCollisions(p, mapData)
 
-    // Air timer
-    if (p.onGround) p.airSince = 0
-    else p.airSince = (p.airSince || 0) + dt
+  // Air timer & decay timers
+  if (p.onGround) p.airSince = 0
+  else p.airSince = (p.airSince || 0) + dt
+  p.jumpBufferedT = Math.max(0, p.jumpBufferedT - dt)
+  p.tictacCd = Math.max(0, (p.tictacCd || 0) - dt)
 
     // Allow mantling while falling: if holding jump and moving downward near a ledge, attempt a catch
     // This makes catching an edge while dropping easier than the short jump-edge coyote window
@@ -552,9 +639,9 @@ function physicsStep(room, dt) {
 
     // Default mode if not in a special state
     if (p.onGround) {
-      if (!['mantle', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'ground'
+      if (!['mantle', 'slide', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'ground'
     } else {
-      if (!['mantle', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'air'
+      if (!['mantle', 'slide', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'air'
     }
 
     if (mantleSfx) io.to(room.code).emit('sfx', { kind: mantleSfx, id: p.id })

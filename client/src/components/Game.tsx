@@ -46,6 +46,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       const kind = String(e?.kind ?? '').toLowerCase()
       const map: Record<string, string> = {
         jump: 'jump',
+        slide: 'slide',
         wallrun: 'wallrun',
         mantle: 'mantle',
         land: 'land',
@@ -243,6 +244,9 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
 
   // Landing vertical dip (positional)
   const landY = useRef(0) // additive to camera.position.y
+  // Slide vertical offset (smooth crouch depth + gentle bob)
+  const slideY = useRef(0)
+  const slideBobPhase = useRef(0)
 
   // Tunables
   const EYE_HEIGHT = 1.62
@@ -259,12 +263,14 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
 
   const STRAFE_TILT = 0.04
   const WALL_ROLL = 0.18
-  // Removed slide mechanics; retain constant for potential future use placeholder
-  const SLIDE_PITCH = 0
+  const SLIDE_PITCH = -0.08
 
   const LAND_KICK = -0.065
   const LAND_DIP_Y = -0.1
   const LAND_RECOVER = 10.0
+  const SLIDE_Y_TARGET = -0.38
+  const SLIDE_BOB_AMP = 0.05
+  const SLIDE_BOB_FREQ = 0.8
 
   useEffect(() => {
     if (!me) return
@@ -287,7 +293,7 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
 
     // ---------- Authoritative position (no positional bob) ----------
     const eyeX = me.pos[0]
-    const eyeY = me.pos[1] + EYE_HEIGHT
+  const eyeY = me.pos[1] + EYE_HEIGHT
     const eyeZ = me.pos[2]
     camera.position.x += (eyeX - camera.position.x) * Math.min(1, dt * 10)
     camera.position.y += (eyeY - camera.position.y) * Math.min(1, dt * 12)
@@ -306,7 +312,7 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     fovRef.current += (targetFov - fovRef.current) * Math.min(1, dt * 2.5)
 
     // ---------- Bob / sway driver ----------
-    const groundedStrict = !!me.onGround || me.mode === 'ground'
+  const groundedStrict = !!me.onGround || me.mode === 'ground' || me.mode === 'slide'
     const disallowBob = me.mode === 'wallrunL' || me.mode === 'wallrunR' || me.mode === 'mantle'
     const canBob = groundedStrict && !disallowBob
 
@@ -341,9 +347,9 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     const targetBaseRoll = strafeRoll + modeRoll
     baseRoll.current += (targetBaseRoll - baseRoll.current) * Math.min(1, dt * 8)
 
-  // ---------- Landing effects ----------
+  // ---------- Slide pitch + landing effects ----------
     let pitchBias = 0
-  // (slide removed)
+    if (me.mode === 'slide') pitchBias += SLIDE_PITCH
 
     const wasMode = prevMode.current
     const wasOnG = prevOnG.current
@@ -373,6 +379,21 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
       if (Math.abs(landY.current) < 1e-4) landY.current = 0
     }
 
+    // ---------- Slide vertical offset (smooth crouch depth + slow bob) ----------
+  const slideTarget = me.mode === 'slide' ? SLIDE_Y_TARGET : 0
+  const slideK = Math.min(1, dt * 8)
+  slideY.current += (slideTarget - slideY.current) * slideK
+    // gentle slow bob only while actually sliding and moving
+    if (me.mode === 'slide') {
+      const speed = Math.hypot(me.vel[0], me.vel[2])
+      const bobAmp = Math.min(1, speed / 8) * SLIDE_BOB_AMP
+      slideBobPhase.current += dt * SLIDE_BOB_FREQ * Math.PI * 2
+      slideY.current += Math.sin(slideBobPhase.current) * bobAmp * dt // integrate small wobble for smoothness
+    } else {
+      // reset phase slowly when not sliding
+      slideBobPhase.current *= Math.max(0, 1 - dt * 2)
+    }
+
     // ---------- Compose final orientation ----------
     camera.rotation.order = 'YXZ'
     camera.rotation.y = baseYawRef.current + swayYaw.current
@@ -380,7 +401,7 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     camera.rotation.z = baseRoll.current + swayRoll.current
 
     // Apply landing vertical dip after positional smoothing so it is visible
-    camera.position.y += landY.current
+    camera.position.y += landY.current + slideY.current
 
     ;(camera as any).fov = fovRef.current
     camera.updateProjectionMatrix()

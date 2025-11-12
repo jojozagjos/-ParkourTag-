@@ -2,6 +2,7 @@
 // This file lives in src/, so assets are one directory up: ../assets/...
 export const SFX_URLS = {
   jump: new URL('../assets/sfx/jump.wav', import.meta.url).toString(),
+  slide: new URL('../assets/sfx/slide.wav', import.meta.url).toString(),
   wallrun: new URL('../assets/sfx/wallrun.wav', import.meta.url).toString(),
   mantle: new URL('../assets/sfx/mantle.wav', import.meta.url).toString(),
   land: new URL('../assets/sfx/land.wav', import.meta.url).toString(),
