@@ -246,7 +246,7 @@ function PreviewContent({ color, face, hat, faceData }: { color: string, face: '
   const bodyColor = useMemo(() => new THREE.Color(/^#/.test(color)? color : '#f0b46d'), [color])
 
   return (
-    <group ref={group} position={[0,-0.35,0]} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} onPointerMove={onPointerMove}>
+    <group ref={group} position={[0,-0.55,0]} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} onPointerMove={onPointerMove}>
       <mesh position={[0, H/2, 0]} castShadow receiveShadow>
         <boxGeometry args={[0.7, H, 0.7]} />
         <meshStandardMaterial color={bodyColor} />

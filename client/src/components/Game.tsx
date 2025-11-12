@@ -3,7 +3,7 @@ import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { Socket } from 'socket.io-client'
 import { useFPControls } from '../controls/useFPControls'
-import { MapMeshes } from '../map'
+import { MapMeshes, pickMapData } from '../map'
 import type { Snapshot, NetPlayer, RoundResults, InputState } from '../types'
 import Scoreboard from './Scoreboard'
 import ResultsModal from './ResultsModal'
@@ -187,7 +187,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           {snap?.players.map(p => (
             <Avatar key={p.id} p={p} isSelf={p.id === selfId} isIt={snap?.itId === p.id} />
           ))}
-          <FPCamera me={me} inputRef={inputRef} />
+          <FPCamera me={me} inputRef={inputRef} mapName={snap?.mapName || mapName} />
         </Suspense>
       </Canvas>
 
@@ -203,9 +203,9 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       </div>
 
   {snap && <Scoreboard scores={snap.scores} itId={snap.itId} players={snap.players} />}
-      <ResultsModal results={results} />
+  <ResultsModal results={results} onDismiss={() => setResults(null)} />
   {/* Map vote shown only during intermission; now used for pre-game vote as well */}
-      {snap?.intermission && maps.length > 0 && (
+      {snap?.intermission && maps.length > 0 && !results && (
         <MapVote socket={socket} maps={maps} current={snap.mapName} voteCounts={voteCounts} />
       )}
       {paused && <PauseMenu socket={socket} onClose={() => { setPausedGlobal(false); setPaused(false) }} />}
@@ -354,7 +354,7 @@ const Avatar = memo(function Avatar({ p, isSelf, isIt }: { p: NetPlayer; isSelf:
  * Adds gentle smoothing, speed FOV, bob/sway, strafe tilt, wallrun roll,
  * slide pitch, and a landing kick. Defensive clamp on dt guards long frames.
  */
-function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefObject<InputState> }) {
+function FPCamera({ me, inputRef, mapName }: { me: NetPlayer | null; inputRef: React.RefObject<InputState>; mapName?: string }) {
   const { camera } = useThree()
 
   // Persistent bases (no FX applied here)
@@ -381,10 +381,13 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
   const slidePhase = useRef(0)
   const slidePitch = useRef(0) // smoothed slide pitch
   const slidePitchVel = useRef(0)
+  const slideRollRef = useRef(0) // smoothed sideways roll while sliding
+  const slideRollVel = useRef(0)
 
   // Tunables
   const EYE_HEIGHT = 1.62
-  const EYE_HEIGHT_SLIDE = 1.28
+  const EYE_HEIGHT_SLIDE = 1.20 // lowered further for stronger slide feel
+  const EYE_HEIGHT_CROUCH = 1.48
   let BASE_FOV = getSettings().fov || 80
   let MAX_FOV = Math.max(BASE_FOV, BASE_FOV + 16)
   const SPEED_FOV_GAIN = 0.14
@@ -446,18 +449,69 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     // ---------- Authoritative position (no positional bob) ----------
     const eyeX = me.pos[0]
     // Smoothly ease eye height towards crouched height when sliding
-  const targetEyeOffset = me.mode === 'slide' ? (EYE_HEIGHT_SLIDE - EYE_HEIGHT) : 0
-  // Smoothly ease using critically-damped smoothing to avoid pops when entering/exiting slide
-  eyeYOffset.current = smoothDamp(eyeYOffset.current, targetEyeOffset, eyeYVel, 0.12, dt)
+    const baseOffset = me.mode === 'slide'
+      ? (EYE_HEIGHT_SLIDE - EYE_HEIGHT) - 0.06 // extra drop for slide visual only
+      : (me.mode === 'crouch' ? (EYE_HEIGHT_CROUCH - EYE_HEIGHT) : 0)
+    const targetEyeOffset = baseOffset
+    // Make downward drop faster when entering slide, and rise back up a bit slower when exiting
+    const goingDown = targetEyeOffset < eyeYOffset.current // target is more negative than current
+    const smoothTime = goingDown ? 0.06 : 0.14
+    // Critically-damped smoothing avoids pops when entering/exiting slide
+    eyeYOffset.current = smoothDamp(eyeYOffset.current, targetEyeOffset, eyeYVel, smoothTime, dt)
     // Slide bob: slow up/down while in slide, decay otherwise
     if (me.mode === 'slide') {
-      slidePhase.current += dt * SLIDE_BOB_FREQ * Math.PI * 2
-      const targetBob = SLIDE_BOB_AMP * Math.sin(slidePhase.current)
-      slideBobY.current += (targetBob - slideBobY.current) * Math.min(1, dt * 6)
+      // Fully suppress slide vertical bob; aggressively decay any residual
+      slideBobY.current += (0 - slideBobY.current) * Math.min(1, dt * 12)
     } else {
+      // (kept for potential future crouch-specific bob)
       slideBobY.current += (0 - slideBobY.current) * Math.min(1, dt * 5)
     }
-    const eyeY = me.pos[1] + EYE_HEIGHT + eyeYOffset.current
+  let eyeYTarget = me.pos[1] + EYE_HEIGHT + eyeYOffset.current
+  // Smooth clamp state
+  const clampVelRef = (FPCamera as any)._clampVelRef || ((FPCamera as any)._clampVelRef = { v: 0 })
+  const clampOffsetRef = (FPCamera as any)._clampOffsetRef || ((FPCamera as any)._clampOffsetRef = { value: 0 })
+    // Improved dynamic ceiling clamp: detect any AABB overhead whose underside intersects the vertical column above player.
+    try {
+      const mapData = pickMapData(mapName)
+      if (mapData && Array.isArray(mapData.aabbs)) {
+        const R = constants.PLAYER?.RADIUS ?? 0.35
+        let nearestCeiling = Infinity
+        for (const b of mapData.aabbs) {
+          // Horizontal overlap (expanded by radius)
+          const horiz = (me.pos[0] >= b.min[0] - R && me.pos[0] <= b.max[0] + R && me.pos[2] >= b.min[2] - R && me.pos[2] <= b.max[2] + R)
+          if (!horiz) continue
+          // Block underside above player base; treat as ceiling candidate if underside above player's feet
+          if (b.min[1] > me.pos[1] + 0.2 && b.min[1] < nearestCeiling) {
+            nearestCeiling = b.min[1]
+          }
+        }
+        if (nearestCeiling !== Infinity) {
+          const baseMargin = 0.14
+          const targetPitch = inputRef.current?.pitch ?? me.pitch
+          const lookUpFactor = Math.max(0, targetPitch)
+          const extra = Math.min(0.18, lookUpFactor * 0.25)
+          const margin = baseMargin + extra
+          const clampY = nearestCeiling - margin
+          // Desired clamp offset relative to natural (unclamped) eye target
+          const desiredClampOffset = Math.min(0, clampY - eyeYTarget)
+          // Smooth only upward release to avoid jitter; snap quickly downward
+          if (desiredClampOffset < clampOffsetRef.value) {
+            clampOffsetRef.value = desiredClampOffset // snap tighter
+          } else {
+            // ease offset toward 0 (release) to prevent oscillation
+            const releaseRate = Math.min(1, dt * 6)
+            clampOffsetRef.value += (desiredClampOffset - clampOffsetRef.value) * releaseRate
+          }
+          eyeYTarget += clampOffsetRef.value
+        } else {
+          // ease clamp offset back to 0 when open space
+          const releaseRate = Math.min(1, dt * 4)
+          clampOffsetRef.value += (0 - clampOffsetRef.value) * releaseRate
+          eyeYTarget += clampOffsetRef.value
+        }
+      }
+    } catch {}
+    const eyeY = eyeYTarget
     const eyeZ = me.pos[2]
     camera.position.x += (eyeX - camera.position.x) * Math.min(1, dt * 10)
     camera.position.y += (eyeY - camera.position.y) * Math.min(1, dt * 12)
@@ -476,8 +530,8 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     fovRef.current += (targetFov - fovRef.current) * Math.min(1, dt * 2.5)
 
     // ---------- Bob / sway driver ----------
-  const groundedStrict = !!me.onGround || me.mode === 'ground' || me.mode === 'slide'
-    const disallowBob = me.mode === 'wallrunL' || me.mode === 'wallrunR' || me.mode === 'mantle'
+    const groundedStrict = !!me.onGround || me.mode === 'ground' || me.mode === 'crouch'
+    const disallowBob = me.mode === 'wallrunL' || me.mode === 'wallrunR' || me.mode === 'mantle' || me.mode === 'slide'
     const canBob = groundedStrict && !disallowBob
 
     const moving = speed > 0.2
@@ -487,17 +541,23 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     // Keep phase continuous, even if amp is zero
     phase.current += dt * freq * Math.PI * 2
 
-    const sin1 = Math.sin(phase.current)
-    const sin2 = Math.sin(phase.current * 2.0)
-
-    const targetSwayRoll = -(SWAY_ROLL_AMP * ampScale) * sin1
-    const targetSwayYaw = -(SWAY_YAW_AMP * ampScale) * sin1
-    const targetSwayPitch = SWAY_PITCH_AMP * ampScale * sin2
-
-    const sK = Math.min(1, dt * SWAY_RESP)
-    swayRoll.current += (targetSwayRoll - swayRoll.current) * sK
-    swayYaw.current += (targetSwayYaw - swayYaw.current) * sK
-    swayPitch.current += (targetSwayPitch - swayPitch.current) * sK
+    if (me.mode === 'slide') {
+      // Decay sway components while sliding (no bob)
+      const decay = Math.min(1, dt * 10)
+      swayRoll.current *= (1 - decay)
+      swayYaw.current *= (1 - decay)
+      swayPitch.current *= (1 - decay)
+    } else {
+      const sin1 = Math.sin(phase.current)
+      const sin2 = Math.sin(phase.current * 2.0)
+      const targetSwayRoll = -(SWAY_ROLL_AMP * ampScale) * sin1
+      const targetSwayYaw = -(SWAY_YAW_AMP * ampScale) * sin1
+      const targetSwayPitch = SWAY_PITCH_AMP * ampScale * sin2
+      const sK = Math.min(1, dt * SWAY_RESP)
+      swayRoll.current += (targetSwayRoll - swayRoll.current) * sK
+      swayYaw.current += (targetSwayYaw - swayYaw.current) * sK
+      swayPitch.current += (targetSwayPitch - swayPitch.current) * sK
+    }
 
     // ---------- Strafe tilt + wall-run roll ----------
     const inpt = inputRef.current
@@ -549,7 +609,14 @@ function FPCamera({ me, inputRef }: { me: NetPlayer | null; inputRef: React.RefO
     camera.rotation.order = 'YXZ'
     camera.rotation.y = baseYawRef.current + swayYaw.current
   camera.rotation.x = basePitchRef.current + (pitchBias + pitchFx.current) + swayPitch.current
-    camera.rotation.z = baseRoll.current + swayRoll.current
+    // Smoothed slide roll: target about -5deg with small lateral variation, quick ease in/out
+    const rtVec = [Math.cos(me.yaw), 0, -Math.sin(me.yaw)]
+    const lateral = me.vel[0] * rtVec[0] + me.vel[2] * rtVec[2]
+    const lateralAdj = Math.max(-0.02, Math.min(0.02, -lateral * 0.01))
+    const targetSlideRoll = me.mode === 'slide' ? (-0.087266 + lateralAdj) : 0 // -5deg in radians
+    const rollSmoothTime = me.mode === 'slide' ? 0.08 : 0.12
+    slideRollRef.current = smoothDamp(slideRollRef.current, targetSlideRoll, slideRollVel, rollSmoothTime, dt)
+    camera.rotation.z = baseRoll.current + swayRoll.current + slideRollRef.current
 
     // Apply landing vertical dip after positional smoothing so it is visible
   camera.position.y += landY.current + slideBobY.current

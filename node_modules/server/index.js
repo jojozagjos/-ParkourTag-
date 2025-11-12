@@ -114,6 +114,7 @@ function makePlayer(id, name) {
     mode: 'air',
     // slide
     slideT: 0,
+    crouchSince: 0,
     // jump buffer & tic-tac
     jumpBufferedT: 0,
     tictacCd: 0,
@@ -131,7 +132,9 @@ function makePlayer(id, name) {
 }
 
 function resolveCollisions(player, mapData) {
-  const height = player.mode === 'slide' ? Math.max(1.0, P.HEIGHT - 0.6) : P.HEIGHT
+  const height = player.mode === 'slide'
+    ? Math.max(1.0, P.HEIGHT - 0.6)
+    : (player.mode === 'crouch' ? (P.CROUCH_HEIGHT || (P.HEIGHT - 0.25)) : P.HEIGHT)
   const aabb = {
     min: [player.pos[0] - P.RADIUS, player.pos[1], player.pos[2] - P.RADIUS],
     max: [player.pos[0] + P.RADIUS, player.pos[1] + height, player.pos[2] + P.RADIUS]
@@ -188,7 +191,9 @@ function resolveCollisions(player, mapData) {
 // Check if there is enough vertical headroom to stand upright at current XZ.
 // Returns true if no obstacle intersects the additional head region between current height and full standing height.
 function hasHeadClearance(player, mapData) {
-  const currentHeight = player.mode === 'slide' ? Math.max(1.0, P.HEIGHT - 0.6) : P.HEIGHT
+  const currentHeight = player.mode === 'slide'
+    ? Math.max(1.0, P.HEIGHT - 0.6)
+    : (player.mode === 'crouch' ? (P.CROUCH_HEIGHT || (P.HEIGHT - 0.25)) : P.HEIGHT)
   if (currentHeight >= P.HEIGHT - 1e-4) return true
   const headMinY = player.pos[1] + currentHeight
   const headMaxY = player.pos[1] + P.HEIGHT
@@ -205,6 +210,18 @@ function hasHeadClearance(player, mapData) {
     if (aabbOverlap(aabb, e)) return false
   }
   return true
+}
+
+// Returns vertical clearance (distance from player's feet Y to nearest underside above) or Infinity if open.
+function overheadClearance(player, mapData) {
+  const R = P.RADIUS
+  let nearest = Infinity
+  for (const b of mapData.aabbs) {
+    if (player.pos[0] >= b.min[0] - R && player.pos[0] <= b.max[0] + R && player.pos[2] >= b.min[2] - R && player.pos[2] <= b.max[2] + R) {
+      if (b.min[1] > player.pos[1] + 0.05 && b.min[1] < nearest) nearest = b.min[1]
+    }
+  }
+  return nearest === Infinity ? Infinity : (nearest - player.pos[1])
 }
 
 function tryMantle(player, mapData) {
@@ -588,9 +605,17 @@ function physicsStep(room, dt) {
     if (p.onGround) {
       const planar = Math.hypot(p.vel[0], p.vel[2])
       if (inp.crouch && planar >= P.SLIDE_SPEED_MIN && p.mode !== 'slide') {
-        p.mode = 'slide'
-        p.slideT = P.SLIDE_DURATION
-        io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
+        const slideHeight = Math.max(1.0, P.HEIGHT - 0.6)
+        const clearance = overheadClearance(p, mapData)
+        // Require enough space above feet for slide body (avoid sliding into tiny gaps)
+        if (clearance === Infinity || clearance >= (P.MIN_SLIDE_CLEARANCE || slideHeight + 0.05)) {
+          p.mode = 'slide'
+          p.slideT = P.SLIDE_DURATION
+          io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
+        } else {
+          // Not enough clearance: enter crouch instead
+          p.mode = 'crouch'
+        }
       }
     }
     if (p.mode === 'slide') {
@@ -599,18 +624,40 @@ function physicsStep(room, dt) {
       const fr = Math.max(0, (P.SLIDE_FRICTION || 3.0) * dt)
       p.vel[0] *= Math.max(0, 1 - fr)
       p.vel[2] *= Math.max(0, 1 - fr)
+      // Abort slide if clearance becomes too small (e.g. moving under a very low overhang)
+      const slideHeight = Math.max(1.0, P.HEIGHT - 0.6)
+      const clearance = overheadClearance(p, mapData)
+      if (clearance !== Infinity && clearance < (P.MIN_SLIDE_CLEARANCE || slideHeight + 0.05)) {
+        p.mode = 'crouch'
+        p.slideT = 0
+      }
       // Try to exit slide if conditions say so, but only if there is headroom to stand
       const wantExit = (!p.onGround || !inp.crouch || p.slideT <= 0)
       if (wantExit) {
         if (hasHeadClearance(p, mapData)) {
           p.mode = p.onGround ? 'ground' : 'air'
         } else {
-          // stay in slide while blocked by ceiling
-          p.mode = 'slide'
-          // prevent accumulation of slide timer negative values
-          if (p.slideT < -0.1) p.slideT = -0.1
+          // Transition into crouch (slow walk) if blocked overhead after slide
+          p.mode = 'crouch'
+          p.crouchSince = (p.crouchSince || 0) + dt
         }
       }
+    }
+    // Handle crouch persistence & speed penalty
+    if (p.mode === 'crouch') {
+      // Apply movement speed reduction
+      const crouchMult = P.CROUCH_SPEED_MULT || 0.55
+      const planarSpd = Math.hypot(p.vel[0], p.vel[2])
+      const maxCrouch = (P.MAX_SPEED * crouchMult)
+      if (planarSpd > maxCrouch) {
+        const s = maxCrouch / planarSpd; p.vel[0] *= s; p.vel[2] *= s
+      }
+      // Exit crouch automatically when head clearance returns
+      if (hasHeadClearance(p, mapData) && !inp.crouch) {
+        p.mode = p.onGround ? 'ground' : 'air'
+        p.crouchSince = 0
+      }
+      // If player presses jump while crouched and there is clearance, allow jump (handled later by jump buffer logic)
     }
 
     // Gravity baseline
@@ -646,9 +693,9 @@ function physicsStep(room, dt) {
 
     // Default mode if not in a special state
     if (p.onGround) {
-      if (!['mantle', 'slide', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'ground'
+      if (!['mantle', 'slide', 'wallrunL', 'wallrunR', 'crouch'].includes(p.mode)) p.mode = 'ground'
     } else {
-      if (!['mantle', 'slide', 'wallrunL', 'wallrunR'].includes(p.mode)) p.mode = 'air'
+      if (!['mantle', 'slide', 'wallrunL', 'wallrunR', 'crouch'].includes(p.mode)) p.mode = 'air'
     }
 
     if (mantleSfx) io.to(room.code).emit('sfx', { kind: mantleSfx, id: p.id })
@@ -736,6 +783,8 @@ function startRound(room) {
     p._wallrunBoostUsed = false
     p.mantleT = 0; p.mantleFromY = 0; p.mantleToY = 0
   })
+  // Reset scores every round
+  room.scores = {}
   room.roundTime = TAG.ROUND_SECONDS
   room.intermission = false
   room.intermissionTime = 0

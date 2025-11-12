@@ -1,7 +1,7 @@
 import React from 'react'
 import type { RoundResults } from '../types'
 
-export default function ResultsModal({ results }:{ results: RoundResults | null }) {
+export default function ResultsModal({ results, onDismiss }:{ results: RoundResults | null, onDismiss?: () => void }) {
   if (!results) return null
   return (
     <div style={{
@@ -17,7 +17,8 @@ export default function ResultsModal({ results }:{ results: RoundResults | null 
             </li>
           ))}
         </ol>
-        <p style={{ opacity:0.8 }}>Intermission. Next map loading soon.</p>
+        <p style={{ opacity:0.8, marginBottom:12 }}>Intermission. Vote for the next map.</p>
+        {onDismiss && <button onClick={onDismiss}>Continue</button>}
       </div>
     </div>
   )

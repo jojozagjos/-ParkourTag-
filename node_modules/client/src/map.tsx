@@ -11,7 +11,7 @@ for (const k of Object.keys(ctx)) {
   const name = k.split('/').pop()!.replace('.json', '')
   maps[name] = ctx[k]
 }
-function pickMapData(name?: string) {
+export function pickMapData(name?: string) {
   if (name && maps[name]) return maps[name]
   const def = (mapIndex as any).default
   return maps[def] || maps[Object.keys(maps)[0]]

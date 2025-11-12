@@ -1,10 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Socket } from 'socket.io-client'
 
 export default function MapVote({ socket, maps, current, voteCounts }:{ socket: Socket, maps: string[], current: string, voteCounts?: Record<string, number> }) {
   const opts = useMemo(() => maps, [maps])
   const [highlight, setHighlight] = useState(0)
-  useEffect(() => { setHighlight(Math.max(0, opts.indexOf(current))) }, [opts, current])
+  const userChangedRef = useRef(false)
+  // Only initialize highlight once or if current option disappears
+  useEffect(() => {
+    if (!opts.length) return
+    const curIdx = opts.indexOf(current)
+    // If current isn't in list or highlight is out of bounds, correct it.
+    if (highlight >= opts.length || highlight < 0) {
+      setHighlight(curIdx >= 0 ? curIdx : 0)
+      return
+    }
+    // If the user hasn't manually changed and current exists, set initial highlight.
+    if (!userChangedRef.current && curIdx >= 0) {
+      setHighlight(curIdx)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts])
 
   useEffect(() => {
     // Auto-unlock pointer while voting
@@ -18,10 +33,10 @@ export default function MapVote({ socket, maps, current, voteCounts }:{ socket: 
         if (idx >= 0 && idx < opts.length) socket.emit('vote:map', { name: opts[idx] })
       }
       // arrows to move highlight, Enter to vote highlighted
-      if (e.key === 'ArrowRight' || e.key === 'd') setHighlight(h => Math.min(opts.length - 1, h + 1))
-      if (e.key === 'ArrowLeft' || e.key === 'a') setHighlight(h => Math.max(0, h - 1))
-      if (e.key === 'ArrowDown' || e.key === 's') setHighlight(h => Math.min(opts.length - 1, h + 2))
-      if (e.key === 'ArrowUp' || e.key === 'w') setHighlight(h => Math.max(0, h - 2))
+  if (e.key === 'ArrowRight' || e.key === 'd') { userChangedRef.current = true; setHighlight(h => Math.min(opts.length - 1, h + 1)) }
+  if (e.key === 'ArrowLeft' || e.key === 'a') { userChangedRef.current = true; setHighlight(h => Math.max(0, h - 1)) }
+  if (e.key === 'ArrowDown' || e.key === 's') { userChangedRef.current = true; setHighlight(h => Math.min(opts.length - 1, h + 2)) }
+  if (e.key === 'ArrowUp' || e.key === 'w') { userChangedRef.current = true; setHighlight(h => Math.max(0, h - 2)) }
       if (e.key === 'Enter' || e.key === ' ') {
         const m = opts[highlight]
         if (m) socket.emit('vote:map', { name: m })
@@ -60,7 +75,7 @@ export default function MapVote({ socket, maps, current, voteCounts }:{ socket: 
             const isLeading = leading === m && count > 0
             const isHi = i === highlight
             return (
-              <button key={m} onClick={() => socket.emit('vote:map', { name:m })}
+              <button key={m} onClick={() => { userChangedRef.current = true; setHighlight(i); socket.emit('vote:map', { name:m }) }}
                 style={{
                   padding:'14px 16px', borderRadius:10, border:'1px solid #30407a', cursor:'pointer', textAlign:'left',
                   background: isHi ? '#1b2a5a' : (isCurrent ? '#122046' : '#0d1430'), color:'#fff',

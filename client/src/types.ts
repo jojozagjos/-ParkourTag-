@@ -24,7 +24,7 @@ export type NetPlayer = {
   yaw: number
   pitch: number
   onGround: boolean
-  mode: 'ground' | 'air' | 'slide' | 'wallrunL' | 'wallrunR' | 'mantle'
+  mode: 'ground' | 'air' | 'slide' | 'crouch' | 'wallrunL' | 'wallrunR' | 'mantle'
 }
 
 export type Scores = Record<string, number>

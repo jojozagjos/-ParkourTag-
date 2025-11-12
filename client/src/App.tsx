@@ -69,27 +69,36 @@ export default function App() {
 }
 
 function Intro({ onDone }: { onDone: () => void }) {
-  const [stage, setStage] = useState<0 | 1 | 2>(0)
+  // stages: 0 (creator), 1 (title reveal), 2 (hold), 3 (done)
+  const [stage, setStage] = useState<0 | 1 | 2 | 3>(0)
+
   useEffect(() => {
-    let t1 = window.setTimeout(() => setStage(1), 1700) // after first text fade-out move to second
-    let t2 = window.setTimeout(() => setStage(2), 3400) // after second text fade-out, proceed
-    let t3 = window.setTimeout(() => onDone(), 4800)
+    const t1 = window.setTimeout(() => setStage(1), 1800) // switch to title reveal
+    const t2 = window.setTimeout(() => setStage(2), 4200) // hold finished title
+    const t3 = window.setTimeout(() => { setStage(3); onDone() }, 5600)
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
   }, [onDone])
 
-  const text = stage === 0 ? 'made by joseph slade' : stage === 1 ? 'PARKOUR TAG' : ''
+  useEffect(() => {
+    function skip() { setStage(3); onDone() }
+    window.addEventListener('keydown', skip)
+    window.addEventListener('mousedown', skip)
+    return () => { window.removeEventListener('keydown', skip); window.removeEventListener('mousedown', skip) }
+  }, [onDone])
 
+  const title = 'PARKOUR TAG'
   return (
     <div className="intro-root">
-      <div className={`intro-text ${stage === 0 ? 'show' : stage === 1 ? 'show' : 'hide'}`}>{text}</div>
+      {/* Creator credit */}
+      <div className={`intro-credit ${stage === 0 ? 'show' : 'hide'}`}>made by joseph slade</div>
+      {/* Title sequence */}
+      <div className={`intro-title ${stage >= 1 ? 'show' : 'hide'} ${stage === 2 ? 'solid' : ''}`}> 
+        {title.split('').map((ch, i) => (
+          <span key={i} style={{ animationDelay: `${0.05 * i}s` }} className="intro-letter">{ch}</span>
+        ))}
+      </div>
       <div className="intro-skip">Press any key or click to skip</div>
-      <div
-        className="intro-hit"
-        onClick={onDone}
-        onKeyDown={onDone as any}
-        tabIndex={-1}
-        aria-hidden
-      />
+      <div className="intro-hit" aria-hidden />
     </div>
   )
 }

@@ -266,30 +266,24 @@ button.secondary:hover { background: rgba(255,255,255,0.18); }
 }
 
 /* Intro screen */
-.intro-root {
-  position: fixed; inset: 0; z-index: 2500;
-  display: grid; place-items: center;
-  background: linear-gradient(160deg, var(--bg-grad-start), var(--bg-grad-end));
+.intro-root { position: fixed; inset:0; z-index:2500; background: radial-gradient(circle at 50% 45%, #152036 0%, #09101f 65%, #060a12 100%); overflow:hidden; }
+.intro-root::before { content:""; position:absolute; inset:0; background:linear-gradient(160deg,#1b2d4d 0%,transparent 60%), repeating-linear-gradient(120deg,rgba(255,255,255,0.015) 0 6px, transparent 6px 12px); mix-blend-mode:overlay; opacity:0.6; animation: introBG 6s linear infinite; }
+@keyframes introBG { 0% { transform:translateY(0); } 100% { transform:translateY(-40px); } }
+.intro-credit { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:clamp(16px,2.8vw,34px); font-weight:600; letter-spacing:0.18em; text-transform:uppercase; color:#ffffffd9; opacity:0; animation:introCredit 1.6s ease forwards; }
+.intro-credit.hide { display:none; }
+@keyframes introCredit { 0% { opacity:0; filter:blur(6px); transform:translate(-50%,-48%); } 25% { opacity:1; filter:blur(0); transform:translate(-50%,-50%); } 80% { opacity:1; } 100% { opacity:0; filter:blur(3px); transform:translate(-50%,-54%); } }
+.intro-title { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%) scale(0.92); display:flex; gap:0.08em; opacity:0; pointer-events:none; }
+.intro-title.show { animation:introTitleIn 1.2s cubic-bezier(.25,.9,.35,1.0) forwards; }
+.intro-title.solid { animation:introTitleHold 2.1s ease forwards; }
+@keyframes introTitleIn { 0% { opacity:0; transform:translate(-50%,-50%) scale(0.82); filter:blur(8px); } 45% { opacity:1; transform:translate(-50%,-50%) scale(1.04); filter:blur(0); } 80% { transform:translate(-50%,-50%) scale(1.0); } 100% { opacity:1; } }
+@keyframes introTitleHold { 0% { opacity:1; } 85% { opacity:1; } 100% { opacity:0; transform:translate(-50%,-50%) scale(1.02); } }
+.intro-letter { font-size:clamp(32px,6.2vw,84px); font-weight:900; letter-spacing:0.06em; background:linear-gradient(100deg,#e7f1ff 0%,#ffffff 40%,#9fbfff 70%,#5e8dff 100%); -webkit-background-clip:text; background-clip:text; color:transparent; opacity:0; transform:translateY(14px) scale(0.85) rotateX(35deg); animation:introLetter 0.55s cubic-bezier(.25,.9,.35,1.2) forwards; }
+@keyframes introLetter { 0% { opacity:0; transform:translateY(14px) scale(0.85) rotateX(35deg); filter:blur(6px); } 40% { opacity:1; transform:translateY(-4px) scale(1.06) rotateX(0deg); filter:blur(0); } 70% { transform:translateY(0) scale(1.0); } 100% { opacity:1; }
 }
-.intro-text {
-  font-size: clamp(24px, 5vw, 56px);
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  background: linear-gradient(95deg, #fff, #c6d6ff 45%, #92b2ff);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  opacity: 0; transform: translateY(8px);
-  animation: introFade 1.4s ease forwards;
-}
-.intro-text.show { animation: introFade 1.4s ease forwards; }
-.intro-text.hide { opacity: 0; }
-@keyframes introFade {
-  0% { opacity: 0; transform: translateY(8px); }
-  20% { opacity: 1; transform: translateY(0); }
-  80% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(-6px); }
-}
-.intro-skip {
-  position: absolute; bottom: 20px; right: 22px; font-size: 0.75rem; opacity: 0.6; letter-spacing: 0.08em;
-}
-.intro-hit { position: absolute; inset: 0; }
+.intro-letter:nth-child(odd) { animation-duration:0.62s; }
+.intro-letter:nth-child(even) { animation-duration:0.5s; }
+.intro-title.show .intro-letter { animation-play-state:running; }
+.intro-skip { position:absolute; bottom:18px; right:22px; font-size:0.65rem; letter-spacing:0.14em; text-transform:uppercase; color:#ffffffaa; animation:introSkip 0.8s ease 2.2s forwards; opacity:0; }
+@keyframes introSkip { 0% { opacity:0; transform:translateY(6px); } 100% { opacity:0.75; transform:translateY(0); } }
+.intro-skip:hover { color:#ffffffd1; }
+.intro-hit { position:absolute; inset:0; }
