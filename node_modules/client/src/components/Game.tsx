@@ -58,7 +58,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       }
       let bestT = Infinity
       let bestPoint: THREE.Vector3 | null = null
-      const mapData = pickMapData((null as any) || '')
+      const mapData = pickMapData(snap?.mapName || mapName || '')
       if (mapData && Array.isArray(mapData.aabbs)) {
         for (const b of mapData.aabbs) {
           const t = rayAABB(origin, dir, b)
@@ -285,13 +285,11 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
                 position={[14, 22, 12]}
                 intensity={2.0}
                 castShadow
-                // Lower shadow map size for performance; good balance on most GPUs
-                shadow-mapSize={[1024, 1024]}
+                shadow-mapSize={[2048, 2048]}
                 shadow-bias={-0.00035}
                 shadow-normalBias={0.02}
                 shadow-camera-near={1}
-                // Reduce shadow camera far to minimize shadow rendering area
-                shadow-camera-far={60}
+                shadow-camera-far={80}
                 shadow-camera-left={-35}
                 shadow-camera-right={35}
                 shadow-camera-top={35}
@@ -997,8 +995,7 @@ function Flashlight({ me }: { me: NetPlayer | null }) {
         decay={2}
         color="#f0fbff"
         castShadow
-        // Reduce flashlight shadow resolution to lower GPU cost
-        shadow-mapSize={[512, 512]}
+        shadow-mapSize={[1024, 1024]}
         shadow-bias={-0.0002}
       />
       {/* Local fill point light to softly illuminate nearby geometry */}
@@ -1023,8 +1020,7 @@ function GrappleRope({ p, isSelf, localTarget, localActive }: { p: NetPlayer; is
 
   if (!geomRef.current) {
     // unit cylinder aligned on Y with height 1; we'll scale it per-frame
-    // lower radial segments for performance
-    geomRef.current = new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1, true)
+    geomRef.current = new THREE.CylinderGeometry(0.5, 0.5, 1, 10, 1, true)
     geomRef.current.computeBoundingSphere()
   }
   if (!matRef.current) {
@@ -1178,8 +1174,7 @@ function GrapplePreview({ me, mapName }: { me: NetPlayer | null; mapName?: strin
   return (
     <group>
       <mesh ref={sphereRef} visible={false}>
-        {/* lower segment counts for preview sphere to reduce draw cost */}
-        <sphereGeometry args={[0.28, 10, 8]} />
+        <sphereGeometry args={[0.28, 16, 12]} />
         <meshStandardMaterial color={'#10b981'} emissive={'#064e3b'} emissiveIntensity={0.6} />
       </mesh>
       {/* preview shows only the endpoint */}
@@ -1195,11 +1190,6 @@ function DashEffects({ snap }: { snap: Snapshot | null }) {
   // particle pool to avoid allocations
   const poolRef = useRef<Array<THREE.Mesh>>([])
   const activeRef = useRef<Array<{ mesh: THREE.Mesh; life: number }>>([])
-  // Reuse a simple plane geometry and material for trail meshes to avoid allocations
-  const trailGeomRef = useRef<THREE.PlaneGeometry | null>(null)
-  const trailMatRef = useRef<THREE.MeshStandardMaterial | null>(null)
-  if (!trailGeomRef.current) trailGeomRef.current = new THREE.PlaneGeometry(0.9, 0.18)
-  if (!trailMatRef.current) trailMatRef.current = new THREE.MeshStandardMaterial({ color: '#60a5fa', transparent: true, opacity: 0.28, side: THREE.DoubleSide })
 
   function makeRing() {
     const geo = new THREE.RingGeometry(0.2, 0.6, 18)
@@ -1244,10 +1234,7 @@ function DashEffects({ snap }: { snap: Snapshot | null }) {
         activeRef.current.push({ mesh: m, life: 0.6 })
       }
       // short stretched quad trail (cheap) in direction of travel, only one per player per frame
-      let trail: THREE.Mesh = poolRef.current.pop() as any
-      if (!trail) {
-        trail = new THREE.Mesh(trailGeomRef.current!, trailMatRef.current!)
-      }
+      const trail = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.18), new THREE.MeshStandardMaterial({ color: '#60a5fa', transparent: true, opacity: 0.28, side: THREE.DoubleSide }))
       trail.position.set(p.pos[0], p.pos[1] + 0.9, p.pos[2])
       trail.rotation.x = -Math.PI / 2
       trail.rotation.z = p.yaw

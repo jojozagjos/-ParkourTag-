@@ -38,8 +38,8 @@
   },
   "IT": {
     "DASH_COOLDOWN": 6.0,
-    "DASH_TIME": 0.85,
-    "DASH_SPEED_MULT": 1.55,
+  "DASH_TIME": 1.0,
+  "DASH_SPEED_MULT": 1.9,
     "GRAPPLE_COOLDOWN": 8.0,
     "GRAPPLE_RANGE": 32.0,
     "GRAPPLE_PULL_SPEED": 28.0,

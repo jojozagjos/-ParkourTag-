@@ -10,8 +10,7 @@ const DEFAULTS: Settings = {
   sensitivity: 0.0025,
   invertY: false,
   fov: 80,
-  // Default max device pixel ratio: lower default to improve performance on high-DPI displays
-  maxDpr: 1.0,
+  maxDpr: 1.25,
   masterVolume: 0.8,
 }
 
