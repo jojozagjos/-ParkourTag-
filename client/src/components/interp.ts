@@ -2,7 +2,8 @@ import type { Snapshot, NetPlayer } from '../types'
 
 type Buffered = { t: number, snap: Snapshot }
 // Slightly larger buffer smooths jitter at the cost of a tiny added latency
-const BUFFER_MS = 90
+// Reduce buffer to make the game feel more responsive (lower visual latency)
+const BUFFER_MS = 60
 
 function lerp(a: number, b: number, f: number) { return a + (b - a) * f }
 function lerpAngle(a: number, b: number, f: number) {

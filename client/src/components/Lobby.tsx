@@ -2,7 +2,7 @@ import React from 'react'
 import type { Socket } from 'socket.io-client'
 import type { PlayerSummary } from '../App'
 import constants from '../../../shared/constants.json'
-export default function Lobby({ socket, roomCode, players, selfId, maps, mapName, voteCounts, gameMode }: { socket: Socket, roomCode: string, players: PlayerSummary[], selfId: string, maps: string[], mapName: string, voteCounts: Record<string, number>, gameMode: 'default' | 'noAbility' | 'dark' | 'runners' }) {
+export default function Lobby({ socket, roomCode, players, selfId, maps, mapName, voteCounts, gameMode, setGameMode }: { socket: Socket, roomCode: string, players: PlayerSummary[], selfId: string, maps: string[], mapName: string, voteCounts: Record<string, number>, gameMode: 'default' | 'noAbility' | 'dark' | 'runners', setGameMode: (m: 'default' | 'noAbility' | 'dark' | 'runners') => void }) {
   const me = players.find(p => p.id === selfId)
   const isHost = !!me?.host
   const readyCount = players.filter(p => p.ready).length
@@ -61,7 +61,12 @@ export default function Lobby({ socket, roomCode, players, selfId, maps, mapName
             {isHost && (
               <div style={{ marginTop: 10 }}>
                 <label style={{ display: 'block', marginBottom: 6 }}>Game Mode</label>
-                <select value={gameMode} onChange={e => socket.emit('room:setMode', { gameMode: e.target.value })}>
+                <select value={gameMode} onChange={e => {
+                  const val = e.target.value as 'default' | 'noAbility' | 'dark' | 'runners'
+                  // Optimistically update UI locally so host sees the change immediately
+                  try { setGameMode(val) } catch (_) {}
+                  socket.emit('room:setMode', { gameMode: val })
+                }}>
                   <option title="Default play" value="default">Default</option>
                   <option title="Disable IT abilities" value="noAbility">No Ability</option>
                   <option title="Lower ambient light, enable flashlights" value="dark">Dark Mode (Flashlights)</option>

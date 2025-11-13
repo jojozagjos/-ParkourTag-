@@ -63,7 +63,7 @@ export default function App() {
       {screen === 'intro' && <Intro onDone={() => setScreen('menu')} />}
       {screen === 'menu' && <Menu socket={socket} />}
       {screen === 'lobby' && (
-        <Lobby socket={socket} roomCode={roomCode} players={players} selfId={selfId} maps={maps} mapName={mapName} voteCounts={voteCounts} gameMode={gameMode} />
+        <Lobby socket={socket} roomCode={roomCode} players={players} selfId={selfId} maps={maps} mapName={mapName} voteCounts={voteCounts} gameMode={gameMode} setGameMode={setGameMode} />
       )}
       {screen === 'game' && <Game socket={socket} selfId={selfId} />}
     </div>

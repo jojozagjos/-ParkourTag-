@@ -7,7 +7,7 @@ import { getSettings, isPaused } from '../state/settings'
  * First-person controls with pointer lock and full movement input,
  * including crouch for slide. Emits compact input payloads to the server.
  */
-export function useFPControls(socket: Socket) {
+export function useFPControls(socket: Socket, callbacks?: { onAbilityEdge?: () => void }) {
   const input = useRef<InputState>({
   forward: false, back: false, left: false, right: false,
   jump: false, sprint: false, crouch: false, ability: false,
@@ -31,7 +31,12 @@ export function useFPControls(socket: Socket) {
   // Remap crouch/slide to 'C' to avoid Ctrl+W closing tab
   case 'KeyC': input.current.crouch = down; break
   // Ability key (Q)
-  case 'KeyQ': input.current.ability = down; break
+  case 'KeyQ':
+    // detect edge (press)
+    if (down && !input.current.ability) {
+      try { callbacks?.onAbilityEdge?.() } catch {}
+    }
+    input.current.ability = down; break
         default: return
       }
       socket.emit('input', { ...input.current })

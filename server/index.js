@@ -560,8 +560,8 @@ function physicsStep(room, dt) {
     const accelBase = p.onGround ? P.MOVE_ACCEL : P.AIR_ACCEL
   const accel = accelBase * (isSprinting ? 1.5 : 1.0)
   let maxSpeed = isSprinting ? P.MAX_SPEED * P.SPRINT_MULT : P.MAX_SPEED
-    // Apply dash speed multiplier if active
-    if (room.itId === p.id && p.itAbility === 'dash' && p.itDashT > 0 && room.gameMode !== 'noAbility') {
+    // Apply dash speed multiplier if active. In 'runners' gamemode, non-IT players may also have dash active.
+    if (p.itAbility === 'dash' && p.itDashT > 0 && room.gameMode !== 'noAbility' && (room.gameMode === 'runners' || room.itId === p.id)) {
       maxSpeed *= (IT.DASH_SPEED_MULT || 1.5)
     }
     if ((p.chainT || 0) > 0) maxSpeed *= (P.CHAIN_SPEED_MULT || 1.0)
@@ -601,8 +601,9 @@ function physicsStep(room, dt) {
     }
 
     // Jump press (edge) with opportunistic mantle including brief coyote-time in air
-    // IT ability activation (edge) before jump-dependent mechanics so grapple can override movement early
-    if (room.itId === p.id && room.gameMode !== 'noAbility') {
+    // Ability activation (edge) before jump-dependent mechanics so grapple can override movement early
+    const canUseAbility = room.gameMode !== 'noAbility' && (room.gameMode === 'runners' || room.itId === p.id)
+    if (canUseAbility) {
       const abilityEdge = !!inp.ability && !p._abilityHold
       if (abilityEdge) {
         if (p.itAbility === 'dash' && p.itDashCd <= 0) {
@@ -614,35 +615,52 @@ function physicsStep(room, dt) {
           p.vel[2] += fwImp[2] * (P.MAX_SPEED * 0.8)
           io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
         } else if (p.itAbility === 'grapple' && p.itGrappleCd <= 0) {
-          // Find forward target top within range using camera pitch+yaw so vertical aiming matters
-          const fwDir = [
+          // Shoot a ray from the player's view (using yaw/pitch) and set grapple target to the first hit point
+          const dir = [
             -Math.sin(p.yaw) * Math.cos(p.pitch),
             Math.sin(p.pitch),
             -Math.cos(p.yaw) * Math.cos(p.pitch)
           ]
-          let best = null; let bestDist = (IT.GRAPPLE_RANGE || 30) + 1
-          for (const b of mapData.aabbs) {
-            const cx = (b.min[0] + b.max[0]) * 0.5
-            const cz = (b.min[2] + b.max[2]) * 0.5
-            const topY = b.max[1]
-            const dx = cx - p.pos[0]
-            const dy = (topY + 0.2) - (p.pos[1] + P.HEIGHT * 0.5) // approximate mid-body start
-            const dz = cz - p.pos[2]
-            const dist3 = Math.hypot(dx, dy, dz)
-            if (dist3 > (IT.GRAPPLE_RANGE || 30)) continue
-            // Require target to be at least a little above current feet unless aiming steeply upward
-            const minH = (IT.GRAPPLE_MIN_HEIGHT || 0.4)
-            if (topY < p.pos[1] + minH && fwDir[1] < 0.15) continue
-            const dot = (dx * fwDir[0] + dy * fwDir[1] + dz * fwDir[2]) / (dist3 || 1)
-            if (dot < 0.55) continue
-            if (dist3 < bestDist) { bestDist = dist3; best = [cx, topY + 0.2, cz] }
-          }
-            if (best) {
-              p.itGrappleTarget = best
-              p.itGrappleActive = true
-              p.itGrappleCd = IT.GRAPPLE_COOLDOWN || 8
-              io.to(room.code).emit('sfx', { kind: 'wallrun', id: p.id })
+          // Use eye height for ray origin so server ray matches client camera-based preview
+          const eyeH = (P.EYE_HEIGHT || (P.HEIGHT * 0.55))
+          const origin = [p.pos[0], p.pos[1] + eyeH, p.pos[2]]
+          const range = IT.GRAPPLE_RANGE || 30
+          // ray-AABB intersection (slab method). Returns t (distance along dir) or null
+          function rayAABB(orig, d, aabb) {
+            let tmin = -Infinity, tmax = Infinity
+            for (let i = 0; i < 3; i++) {
+              const o = orig[i], di = d[i]
+              const min = aabb.min[i], max = aabb.max[i]
+              if (Math.abs(di) < 1e-6) {
+                if (o < min || o > max) return null
+                continue
+              }
+              let t1 = (min - o) / di
+              let t2 = (max - o) / di
+              if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp }
+              if (t1 > tmin) tmin = t1
+              if (t2 < tmax) tmax = t2
+              if (tmin > tmax) return null
             }
+            if (tmax < 0) return null
+            const t = tmin >= 0 ? tmin : tmax
+            return t
+          }
+          let bestT = Infinity
+          let bestPoint = null
+          for (const b of mapData.aabbs) {
+            const t = rayAABB(origin, dir, b)
+            if (t !== null && t <= range && t < bestT) {
+              bestT = t
+              bestPoint = [origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t]
+            }
+          }
+          if (bestPoint) {
+            p.itGrappleTarget = bestPoint
+            p.itGrappleActive = true
+            p.itGrappleCd = IT.GRAPPLE_COOLDOWN || 8
+            io.to(room.code).emit('sfx', { kind: 'wallrun', id: p.id })
+          }
         }
       }
       p._abilityHold = !!inp.ability
@@ -935,8 +953,8 @@ function snapshot(room) {
       chainT: p.chainT,
       itAbility: p.itAbility,
       itDashT: p.itDashT, itDashCd: p.itDashCd,
-  itGrappleActive: p.itGrappleActive, itGrappleCd: p.itGrappleCd,
-  itGrappleTarget: p.itGrappleActive && p.itGrappleTarget ? p.itGrappleTarget : null,
+    itGrappleActive: p.itGrappleActive, itGrappleCd: p.itGrappleCd,
+  itGrappleTarget: (p.itGrappleActive && p.itGrappleTarget) ? (Array.isArray(p.itGrappleTarget) ? { x: p.itGrappleTarget[0], y: p.itGrappleTarget[1], z: p.itGrappleTarget[2] } : p.itGrappleTarget) : null,
       color: p.color,
       face: p.face,
       hat: p.hat,
@@ -1095,7 +1113,7 @@ io.on('connection', (socket) => {
       results: null,
       votes: {},
       voting: true, // enable pre-game voting
-      gameMode: (gameMode === 'default' || gameMode === 'noAbility' || gameMode === 'dark') ? gameMode : 'default'
+  gameMode: (gameMode === 'default' || gameMode === 'noAbility' || gameMode === 'dark' || gameMode === 'runners') ? gameMode : 'default'
     }
     socket.join(code); joinedCode = code
     rooms[code].players[socket.id] = makePlayer(socket.id, name || 'Runner')
@@ -1133,7 +1151,7 @@ io.on('connection', (socket) => {
     const room = rooms[joinedCode]
     if (!room) return
     if (socket.id !== room.hostId) return
-    if (gameMode === 'default' || gameMode === 'noAbility' || gameMode === 'dark') {
+    if (gameMode === 'default' || gameMode === 'noAbility' || gameMode === 'dark' || gameMode === 'runners') {
       room.gameMode = gameMode
       for (const s of Object.keys(room.players)) {
         io.to(s).emit('lobby:update', { roomCode: joinedCode, players: listSummaries(room), maps: mapList.options, mapName: room.mapName, gameMode: room.gameMode })

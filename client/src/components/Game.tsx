@@ -22,7 +22,61 @@ import constants from '../../../shared/constants.json'
 import { getSettings, setSettings, setPaused as setPausedGlobal, isPaused, subscribe, resetSettings } from '../state/settings'
 
 export default function Game({ socket, selfId }: { socket: Socket; selfId: string }) {
-  const inputRef = useFPControls(socket)
+  // Hook input with ability-edge callback so we can show immediate local feedback
+  const [localGrapple, setLocalGrapple] = useState<{ target: [number,number,number]; ts: number; active: boolean } | null>(null)
+  const inputRef = useFPControls(socket, { onAbilityEdge: () => {
+    // local immediate grapple visual: mimic GrapplePreview raycast and show ephemeral rope
+    try {
+      const cam = (document as any).__r3f?.root?.getState?.().camera
+      if (!cam) return
+      const dir = new THREE.Vector3(0,0,-1).applyQuaternion(cam.quaternion).normalize()
+      const origin = new THREE.Vector3(cam.position.x, cam.position.y, cam.position.z)
+      const range = (constants.IT?.GRAPPLE_RANGE || 30)
+      // ray vs AABB (same slab method as GrapplePreview)
+      function rayAABB(orig: THREE.Vector3, dir: THREE.Vector3, aabb: any) {
+        let tmin = -Infinity
+        let tmax = Infinity
+        for (let i = 0; i < 3; i++) {
+          const o = orig.getComponent(i)
+          const di = dir.getComponent(i)
+          const min = aabb.min[i]
+          const max = aabb.max[i]
+          if (Math.abs(di) < 1e-6) {
+            if (o < min || o > max) return null
+            continue
+          }
+          let t1 = (min - o) / di
+          let t2 = (max - o) / di
+          if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp }
+          if (t1 > tmin) tmin = t1
+          if (t2 < tmax) tmax = t2
+          if (tmin > tmax) return null
+        }
+        if (tmax < 0) return null
+        const t = tmin >= 0 ? tmin : tmax
+        return t
+      }
+      let bestT = Infinity
+      let bestPoint: THREE.Vector3 | null = null
+      const mapData = pickMapData((null as any) || '')
+      if (mapData && Array.isArray(mapData.aabbs)) {
+        for (const b of mapData.aabbs) {
+          const t = rayAABB(origin, dir, b)
+          if (t !== null && t >= 0 && t <= range && t < bestT) {
+            bestT = t
+            bestPoint = origin.clone().add(dir.clone().multiplyScalar(t))
+          }
+        }
+      }
+      if (bestPoint) {
+        setLocalGrapple({ target: [bestPoint.x, bestPoint.y, bestPoint.z], ts: performance.now(), active: true })
+        // clear after a short timeout if server doesn't confirm
+        setTimeout(() => {
+          setLocalGrapple(s => (s && performance.now() - s.ts > 1400) ? null : s)
+        }, 1500)
+      }
+    } catch {}
+  } })
   const [results, setResults] = useState<RoundResults | null>(null)
   const [maps, setMaps] = useState<string[]>([])
   const [mapName, setMapName] = useState<string>('')
@@ -252,7 +306,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           ))}
           {/* Grapple rope visuals */}
           {snap?.players.map(p => (
-            <GrappleRope key={p.id+':rope'} p={p} isSelf={p.id === selfId} />
+            <GrappleRope key={p.id+':rope'} p={p} isSelf={p.id === selfId} localTarget={p.id === selfId ? (localGrapple?.active ? localGrapple.target : undefined) : undefined} localActive={p.id === selfId ? !!localGrapple?.active : false} />
           ))}
           {/* Grapple target preview for self when ready.
               In 'runners' gamemode, non-IT players who selected a grapple ability should also see the preview. */}
@@ -956,7 +1010,7 @@ function Flashlight({ me }: { me: NetPlayer | null }) {
 }
 
 // Renders a dynamic line from IT player to grapple target while active
-function GrappleRope({ p, isSelf }: { p: NetPlayer; isSelf?: boolean }) {
+function GrappleRope({ p, isSelf, localTarget, localActive }: { p: NetPlayer; isSelf?: boolean; localTarget?: [number,number,number]; localActive?: boolean }) {
   // We'll render a short cylinder between the player's eye/hand origin and the grapple target.
   const { camera } = useThree()
   const meshRef = useRef<THREE.Mesh | null>(null)
@@ -984,7 +1038,13 @@ function GrappleRope({ p, isSelf }: { p: NetPlayer; isSelf?: boolean }) {
 
   useFrame(() => {
     if (!meshRef.current) return
-    const active = !!(p.itGrappleActive && p.itGrappleTarget)
+    // allow a local override for immediate feedback (localTarget/localActive)
+    let active = !!(p.itGrappleActive && p.itGrappleTarget)
+    let useTarget: THREE.Vector3 | null = null
+    if (isSelf && localActive && localTarget) {
+      active = true
+      useTarget = new THREE.Vector3(localTarget[0], localTarget[1], localTarget[2])
+    }
     meshRef.current.visible = active
     if (!active) return
 
@@ -995,8 +1055,8 @@ function GrappleRope({ p, isSelf }: { p: NetPlayer; isSelf?: boolean }) {
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize()
       const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize()
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize()
-      // offset to the right (hand) and slightly down so the rope starts from the hand/face area
-      origin = camPos.clone().add(right.multiplyScalar(0.28)).add(up.multiplyScalar(-0.15)).add(forward.multiplyScalar(0.12))
+  // offset to the right (hand) and slightly down/forward so the rope starts from the hand/face area
+  origin = camPos.clone().add(right.multiplyScalar(0.34)).add(up.multiplyScalar(-0.22)).add(forward.multiplyScalar(0.32))
     } else {
       const eyeH = (constants.PLAYER?.EYE_HEIGHT ?? 1.62)
       origin = new THREE.Vector3(p.pos[0], p.pos[1] + eyeH - 0.25, p.pos[2])
@@ -1004,7 +1064,12 @@ function GrappleRope({ p, isSelf }: { p: NetPlayer; isSelf?: boolean }) {
       origin.addScaledVector(fw, 0.28)
     }
 
-    const target = new THREE.Vector3((p.itGrappleTarget as any).x, (p.itGrappleTarget as any).y, (p.itGrappleTarget as any).z)
+    // Prefer locally-supplied transient target if present, otherwise use authoritative target
+    const tgtRaw: any = useTarget || p.itGrappleTarget
+    const tx = Array.isArray(tgtRaw) ? tgtRaw[0] : (tgtRaw?.x ?? 0)
+    const ty = Array.isArray(tgtRaw) ? tgtRaw[1] : (tgtRaw?.y ?? 0)
+    const tz = Array.isArray(tgtRaw) ? tgtRaw[2] : (tgtRaw?.z ?? 0)
+    const target = new THREE.Vector3(tx, ty, tz)
     const dir = new THREE.Vector3().subVectors(target, origin)
     const len = Math.max(0.001, dir.length())
 
