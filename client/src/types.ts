@@ -8,6 +8,7 @@ export type InputState = {
   jump: boolean
   sprint: boolean // Added sprint property
   crouch: boolean      // added for slide
+  ability?: boolean    // ability activation (e.g. dash/grapple)
   yaw: number
   pitch: number
 }
@@ -18,7 +19,7 @@ export type NetPlayer = {
   color?: string
   face?: 'default' | 'smile' | 'sunglasses'
   faceData?: string
-  hat?: 'none' | 'cap' | 'cone' | 'halo'
+  hat?: 'none' | 'cone' | 'halo' | 'glasses' | 'shades' | 'headphones' | 'bandana' | 'visor' | 'mask'
   pos: Vec3
   vel: Vec3
   yaw: number
@@ -27,6 +28,14 @@ export type NetPlayer = {
   mode: 'ground' | 'air' | 'slide' | 'crouch' | 'wallrunL' | 'wallrunR' | 'mantle'
   // Remaining time (seconds) for the temporary chaining speed boost
   chainT?: number
+  itAbility?: 'none' | 'dash' | 'grapple'
+  // Dash ability state
+  itDashT?: number
+  itDashCd?: number
+  // Grapple ability state
+  itGrappleActive?: boolean
+  itGrappleCd?: number
+  itGrappleTarget?: { x: number, y: number, z: number } | null
 }
 
 export type Scores = Record<string, number>
@@ -40,6 +49,7 @@ export type Snapshot = {
   scores: Scores
   state?: string
   maps?: string[]
+  gameMode?: 'default' | 'noAbility' | 'dark'
 }
 
 export type RoundResults = {

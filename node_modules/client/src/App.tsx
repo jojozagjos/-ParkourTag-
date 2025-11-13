@@ -19,6 +19,7 @@ export default function App() {
   const [maps, setMaps] = useState<string[]>([])
   const [mapName, setMapName] = useState<string>('')
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({})
+  const [gameMode, setGameMode] = useState<'default' | 'noAbility' | 'dark'>('default')
 
   useEffect(() => {
     // Use same-origin in production; allow override during local dev via VITE_SERVER_URL
@@ -31,11 +32,12 @@ export default function App() {
     setSocket(s)
   s.on('connect', () => setSelfId(s.id ?? ''))
   s.on('connect_error', (err) => console.warn('socket connect_error', err && (err.message || err)))
-    s.on('lobby:update', (payload: { roomCode: string, players: PlayerSummary[], maps?: string[], mapName?: string }) => {
+    s.on('lobby:update', (payload: { roomCode: string, players: PlayerSummary[], maps?: string[], mapName?: string, gameMode?: string }) => {
       setRoomCode(payload.roomCode)
       setPlayers(payload.players)
       if (payload.maps) setMaps(payload.maps)
       if (payload.mapName) setMapName(payload.mapName)
+      if (payload.gameMode === 'default' || payload.gameMode === 'noAbility' || payload.gameMode === 'dark') setGameMode(payload.gameMode)
       setScreen('lobby')
     })
     s.on('vote:update', (payload: { votes: Record<string,string> }) => {
@@ -61,7 +63,7 @@ export default function App() {
       {screen === 'intro' && <Intro onDone={() => setScreen('menu')} />}
       {screen === 'menu' && <Menu socket={socket} />}
       {screen === 'lobby' && (
-        <Lobby socket={socket} roomCode={roomCode} players={players} selfId={selfId} maps={maps} mapName={mapName} voteCounts={voteCounts} />
+        <Lobby socket={socket} roomCode={roomCode} players={players} selfId={selfId} maps={maps} mapName={mapName} voteCounts={voteCounts} gameMode={gameMode} />
       )}
       {screen === 'game' && <Game socket={socket} selfId={selfId} />}
     </div>

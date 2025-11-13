@@ -9,8 +9,8 @@ import { getSettings, isPaused } from '../state/settings'
  */
 export function useFPControls(socket: Socket) {
   const input = useRef<InputState>({
-    forward: false, back: false, left: false, right: false,
-    jump: false, sprint: false, crouch: false,
+  forward: false, back: false, left: false, right: false,
+  jump: false, sprint: false, crouch: false, ability: false,
     yaw: 0, pitch: 0
   })
 
@@ -28,8 +28,10 @@ export function useFPControls(socket: Socket) {
         case 'KeyD': case 'ArrowRight':  input.current.right = down; break
         case 'Space':                    input.current.jump = down; break
         case 'ShiftLeft': case 'ShiftRight': input.current.sprint = down; break
-        // Remap crouch/slide to 'C' to avoid Ctrl+W closing tab
-        case 'KeyC': input.current.crouch = down; break
+  // Remap crouch/slide to 'C' to avoid Ctrl+W closing tab
+  case 'KeyC': input.current.crouch = down; break
+  // Ability key (Q)
+  case 'KeyQ': input.current.ability = down; break
         default: return
       }
       socket.emit('input', { ...input.current })

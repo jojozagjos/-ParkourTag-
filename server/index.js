@@ -82,6 +82,7 @@ function loadMap(name) {
 const P = constants.PLAYER
 const TAG = constants.TAG
 const SCORE = constants.SCORE
+const IT = constants.IT || {}
 const DT = constants.DT
 const MIN_PLAYERS = process.env.MIN_PLAYERS ? Number(process.env.MIN_PLAYERS) : 1
 
@@ -129,7 +130,15 @@ function makePlayer(id, name) {
     mantleFromY: 0,
     mantleToY: 0,
 
-    input: { forward:false,back:false,left:false,right:false,jump:false,sprint:false,crouch:false,yaw:0,pitch:0 }
+  // IT ability selection and timers (default now 'dash')
+  itAbility: 'dash',
+    itDashT: 0,
+    itDashCd: 0,
+    itGrappleActive: false,
+    itGrappleTarget: null,
+    itGrappleCd: 0,
+    _abilityHold: false,
+    input: { forward:false,back:false,left:false,right:false,jump:false,sprint:false,crouch:false,ability:false,yaw:0,pitch:0 }
   }
 }
 
@@ -551,6 +560,10 @@ function physicsStep(room, dt) {
     const accelBase = p.onGround ? P.MOVE_ACCEL : P.AIR_ACCEL
   const accel = accelBase * (isSprinting ? 1.5 : 1.0)
   let maxSpeed = isSprinting ? P.MAX_SPEED * P.SPRINT_MULT : P.MAX_SPEED
+    // Apply dash speed multiplier if active
+    if (room.itId === p.id && p.itAbility === 'dash' && p.itDashT > 0 && room.gameMode !== 'noAbility') {
+      maxSpeed *= (IT.DASH_SPEED_MULT || 1.5)
+    }
     if ((p.chainT || 0) > 0) maxSpeed *= (P.CHAIN_SPEED_MULT || 1.0)
 
     p.vel[0] += wishX * accel * dt
@@ -588,6 +601,68 @@ function physicsStep(room, dt) {
     }
 
     // Jump press (edge) with opportunistic mantle including brief coyote-time in air
+    // IT ability activation (edge) before jump-dependent mechanics so grapple can override movement early
+    if (room.itId === p.id && room.gameMode !== 'noAbility') {
+      const abilityEdge = !!inp.ability && !p._abilityHold
+      if (abilityEdge) {
+        if (p.itAbility === 'dash' && p.itDashCd <= 0) {
+          p.itDashT = IT.DASH_TIME || 0.8
+          p.itDashCd = IT.DASH_COOLDOWN || 6
+          // Small forward impulse
+          const fwImp = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
+          p.vel[0] += fwImp[0] * (P.MAX_SPEED * 0.8)
+          p.vel[2] += fwImp[2] * (P.MAX_SPEED * 0.8)
+          io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
+        } else if (p.itAbility === 'grapple' && p.itGrappleCd <= 0) {
+          // Find forward target top within range
+          const fwDir = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
+          let best = null; let bestDist = (IT.GRAPPLE_RANGE || 30) + 1
+          for (const b of mapData.aabbs) {
+            const cx = (b.min[0] + b.max[0]) * 0.5
+            const cz = (b.min[2] + b.max[2]) * 0.5
+            const topY = b.max[1]
+            // Must be somewhat above/level
+            if (topY < p.pos[1] + (IT.GRAPPLE_MIN_HEIGHT || 0.4)) continue
+            const dx = cx - p.pos[0]
+            const dz = cz - p.pos[2]
+            const dist = Math.hypot(dx, dz)
+            if (dist > (IT.GRAPPLE_RANGE || 30)) continue
+            const dot = (dx * fwDir[0] + dz * fwDir[2]) / (dist || 1)
+            if (dot < 0.55) continue
+            if (dist < bestDist) { bestDist = dist; best = [cx, topY + 0.2, cz] }
+          }
+            if (best) {
+              p.itGrappleTarget = best
+              p.itGrappleActive = true
+              p.itGrappleCd = IT.GRAPPLE_COOLDOWN || 8
+              io.to(room.code).emit('sfx', { kind: 'wallrun', id: p.id })
+            }
+        }
+      }
+      p._abilityHold = !!inp.ability
+      // Tick dash timer & cooldowns
+      if (p.itDashT > 0) p.itDashT = Math.max(0, p.itDashT - dt)
+      if (p.itDashCd > 0) p.itDashCd = Math.max(0, p.itDashCd - dt)
+      if (p.itGrappleCd > 0) p.itGrappleCd = Math.max(0, p.itGrappleCd - dt)
+      if (p.itGrappleActive && p.itGrappleTarget) {
+        const tgt = p.itGrappleTarget
+        const to = [tgt[0] - p.pos[0], tgt[1] - p.pos[1], tgt[2] - p.pos[2]]
+        const dist = Math.hypot(to[0], to[1], to[2]) || 1
+        const pullSpd = (IT.GRAPPLE_PULL_SPEED || 25)
+        const step = Math.min(pullSpd * dt, dist)
+        // Override velocity toward target (grapple is authoritative movement)
+        p.vel[0] = to[0] / dist * pullSpd
+        p.vel[1] = to[1] / dist * pullSpd
+        p.vel[2] = to[2] / dist * pullSpd
+        // End near target or if very close horizontally
+        if (dist < 1.2) {
+          p.itGrappleActive = false
+          p.itGrappleTarget = null
+          p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.45))
+          io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
+        }
+      }
+    }
     let mantleSfx = null
     const jumpPressEdge = !!inp.jump && !p.wasHoldingJump
     if (jumpPressEdge) {
@@ -599,22 +674,44 @@ function physicsStep(room, dt) {
       if (!p.onGround && !mantleSfx && p.tictacCd <= 0) {
         const hit = nearestWall(p, mapData)
         if (hit && p.mode !== 'wallrunL' && p.mode !== 'wallrunR') {
+          // Make tic-tac more forgiving and snappy:
+          // - bias more outward so player is pushed away from the wall
+          // - scale horizontal impulse with current forward velocity
+          // - give a stronger vertical boost
           const along = norm3(cross([0,1,0], hit.normal))
           const fw = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
-          // Combine outward + forward-ish tangent
           const outward = mul3(hit.normal, -1)
+          // prefer outward + along, but allow player's facing to nudge direction
           let dir = norm3([
-            outward[0] * 0.6 + along[0] * 0.4 + fw[0] * 0.2,
+            outward[0] * 0.72 + along[0] * 0.22 + fw[0] * 0.06,
             0,
-            outward[2] * 0.6 + along[2] * 0.4 + fw[2] * 0.2
+            outward[2] * 0.72 + along[2] * 0.22 + fw[2] * 0.06
           ])
-          const force = (P.WALLJUMP_FORCE || 8.5) * 0.65
-          p.vel[0] = dir[0] * force
-          p.vel[2] = dir[2] * force
-          p.vel[1] = Math.max(p.vel[1], P.JUMP_VELOCITY * 0.7)
-          p.tictacCd = P.TICTAC_COOLDOWN
-          io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
-          // consume buffer since we used jump
+          // Base force boosted for better responsiveness
+          const baseForce = (P.WALLJUMP_FORCE || 8.5) * 0.9
+          // Preserve planar component proportionally so we don't stomp momentum
+          const planarBefore = [p.vel[0], 0, p.vel[2]]
+          const preservedAlong = dot3(planarBefore, dir)
+          // Blend preserved forward with outward impulse
+          const blendPreserve = Math.max(0, Math.min(1, preservedAlong / Math.max(1, P.MAX_SPEED)))
+          const finalPlanar = [
+            dir[0] * baseForce * (0.8 + 0.2 * blendPreserve) + planarBefore[0] * (0.2 * blendPreserve),
+            0,
+            dir[2] * baseForce * (0.8 + 0.2 * blendPreserve) + planarBefore[2] * (0.2 * blendPreserve)
+          ]
+          p.vel[0] = finalPlanar[0]
+          p.vel[2] = finalPlanar[2]
+          // Stronger vertical boost to make tictac feel snappy
+          p.vel[1] = Math.max(p.vel[1], P.JUMP_VELOCITY * 0.92)
+          // Slight nudge away to avoid re-collision
+          p.pos[0] += dir[0] * 0.03
+          p.pos[2] += dir[2] * 0.03
+          // Refresh chain window when successfully tic-tacing
+          p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.45))
+          // Slightly shorter cooldown so players can string tics more reliably
+          p.tictacCd = (P.TICTAC_COOLDOWN || 0.28) * 0.85
+          io.to(room.code).emit('sfx', { kind: 'tictac', id: p.id })
+          // consume jump buffer
           p.jumpBufferedT = 0
         }
       }
@@ -817,6 +914,10 @@ function snapshot(room) {
       pos: p.pos, vel: p.vel, yaw: p.yaw, pitch: p.pitch,
       onGround: !!p.onGround, mode: p.mode,
       chainT: p.chainT,
+      itAbility: p.itAbility,
+      itDashT: p.itDashT, itDashCd: p.itDashCd,
+  itGrappleActive: p.itGrappleActive, itGrappleCd: p.itGrappleCd,
+  itGrappleTarget: p.itGrappleActive && p.itGrappleTarget ? p.itGrappleTarget : null,
       color: p.color,
       face: p.face,
       hat: p.hat,
@@ -826,6 +927,7 @@ function snapshot(room) {
     roundTime: room.intermission ? room.intermissionTime : room.roundTime,
     intermission: room.intermission,
     mapName: room.mapName,
+    gameMode: room.gameMode || 'default',
     scores: room.scores,
     state: room.state,
     // Provide maps during any intermission (pre-vote and between rounds) so client can render voting UI.
@@ -952,7 +1054,7 @@ io.on('connection', (socket) => {
   console.log('[io] client connected:', socket.id)
   let joinedCode = null
 
-  socket.on('room:create', ({ name }) => {
+  socket.on('room:create', ({ name, gameMode }) => {
     let code = makeCode()
     while (rooms[code]) code = makeCode()
     const mapName = mapList.default
@@ -973,12 +1075,13 @@ io.on('connection', (socket) => {
       scores: {},
       results: null,
       votes: {},
-      voting: true // enable pre-game voting
+      voting: true, // enable pre-game voting
+      gameMode: (gameMode === 'default' || gameMode === 'noAbility' || gameMode === 'dark') ? gameMode : 'default'
     }
     socket.join(code); joinedCode = code
     rooms[code].players[socket.id] = makePlayer(socket.id, name || 'Runner')
     for (const s of Object.keys(rooms[code].players)) {
-      io.to(s).emit('lobby:update', { roomCode: code, players: listSummaries(rooms[code]), maps: mapList.options, mapName })
+      io.to(s).emit('lobby:update', { roomCode: code, players: listSummaries(rooms[code]), maps: mapList.options, mapName, gameMode: rooms[code].gameMode })
     }
   })
 
@@ -986,12 +1089,12 @@ io.on('connection', (socket) => {
     code = String(code || '').toUpperCase()
     const room = rooms[code]
     if (!room) { socket.emit('error', 'Room not found'); return }
-    socket.join(code); joinedCode = code
-    room.players[socket.id] = makePlayer(socket.id, name || 'Runner')
+  socket.join(code); joinedCode = code
+  room.players[socket.id] = makePlayer(socket.id, name || 'Runner')
     // Ensure scoreboard shows the new player immediately
     room.scores[socket.id] = room.scores[socket.id] || 0
     for (const s of Object.keys(room.players)) {
-      io.to(s).emit('lobby:update', { roomCode: code, players: listSummaries(room), maps: mapList.options, mapName: room.mapName })
+      io.to(s).emit('lobby:update', { roomCode: code, players: listSummaries(room), maps: mapList.options, mapName: room.mapName, gameMode: room.gameMode })
     }
   })
 
@@ -1001,7 +1104,21 @@ io.on('connection', (socket) => {
     const p = room?.players?.[socket.id]; if (!p) return
     p.ready = !!ready
     for (const s of Object.keys(room.players)) {
-      io.to(s).emit('lobby:update', { roomCode: joinedCode, players: listSummaries(room), maps: mapList.options, mapName: room.mapName })
+      io.to(s).emit('lobby:update', { roomCode: joinedCode, players: listSummaries(room), maps: mapList.options, mapName: room.mapName, gameMode: room.gameMode })
+    }
+  })
+
+  // Host may change the game mode while in the lobby. Broadcast to all players.
+  socket.on('room:setMode', ({ gameMode }) => {
+    if (!joinedCode) return
+    const room = rooms[joinedCode]
+    if (!room) return
+    if (socket.id !== room.hostId) return
+    if (gameMode === 'default' || gameMode === 'noAbility' || gameMode === 'dark') {
+      room.gameMode = gameMode
+      for (const s of Object.keys(room.players)) {
+        io.to(s).emit('lobby:update', { roomCode: joinedCode, players: listSummaries(room), maps: mapList.options, mapName: room.mapName, gameMode: room.gameMode })
+      }
     }
   })
 
@@ -1031,14 +1148,14 @@ io.on('connection', (socket) => {
     io.to(joinedCode).emit('vote:update', { votes: room.votes })
   })
 
-  socket.on('player:update', ({ name, color, face, hat, faceData }) => {
+  socket.on('player:update', ({ name, color, face, hat, faceData, itAbility }) => {
     if (!joinedCode) return
     const room = rooms[joinedCode]; if (!room) return
     const p = room.players[socket.id]; if (!p) return
     if (typeof name === 'string' && name.trim()) p.name = name.trim().slice(0, 24)
     if (typeof color === 'string' && /^#([0-9a-fA-F]{6})$/.test(color)) p.color = color
   const faces = new Set(['smile'])
-  const hats = new Set(['none','cap','cone','halo'])
+  const hats = new Set(['none','cone','halo','glasses','shades','headphones','bandana','visor','mask'])
     if (typeof face === 'string' && faces.has(face)) p.face = face
     if (typeof hat === 'string' && hats.has(hat)) p.hat = hat
     if (typeof faceData === 'string' && faceData.startsWith('data:image/png;base64,')) {
@@ -1046,9 +1163,10 @@ io.on('connection', (socket) => {
       if (faceData.length > 2000 && faceData.length < 140000) p.faceData = faceData
       else if (faceData.length <= 2000) p.faceData = null
     }
+  if (itAbility === 'dash' || itAbility === 'grapple' || itAbility === 'none') p.itAbility = itAbility
     // reflect to lobby
     for (const s of Object.keys(room.players)) {
-      io.to(s).emit('lobby:update', { roomCode: joinedCode, players: listSummaries(room), maps: mapList.options, mapName: room.mapName })
+      io.to(s).emit('lobby:update', { roomCode: joinedCode, players: listSummaries(room), maps: mapList.options, mapName: room.mapName, gameMode: room.gameMode })
     }
   })
 
@@ -1060,6 +1178,7 @@ io.on('connection', (socket) => {
     p.input = {
       forward: !!input.back, back: !!input.forward, left: !!input.left, right: !!input.right,
       jump: !!input.jump, sprint: !!input.sprint, crouch: !!input.crouch,
+      ability: !!input.ability,
       yaw: Number.isFinite(input.yaw) ? input.yaw : p.yaw,
       pitch: Number.isFinite(input.pitch) ? input.pitch : p.pitch
     }

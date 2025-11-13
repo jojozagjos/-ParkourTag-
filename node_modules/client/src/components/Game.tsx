@@ -13,6 +13,7 @@ import { pulseScreen } from '../sfx'
 import { playSfx } from '../assets'
 import { initPositionalAudio, playSfx3D } from '../audio/positional'
 import Skybox from './Skybox'
+import { accessoryMesh } from './accessories'
 import { TextureLoader } from 'three'
 import { rememberMany } from '../nameRegistry'
 // Import the face texture so Vite copies it into dist; absolute /assets paths were not bundled.
@@ -200,32 +201,44 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
         }}
       >
         <Suspense fallback={null}>
-          {/* Default skybox (no map-specific palettes) */}
+          {/* Sky & lighting adjust for dark mode */}
           <Skybox />
-          {/* Lighting pass: stronger fill + key */}
-          <hemisphereLight args={['#e3f2ff', '#242a35', 1.4]} />
-          <ambientLight intensity={0.7} />
-          {/* Lower shadow-mapSize to reduce GPU shadow cost */}
-          <directionalLight
-            position={[14, 22, 12]}
-            intensity={2.0}
-            castShadow
-            shadow-mapSize={[2048, 2048]}
-            shadow-bias={-0.00035}
-            shadow-normalBias={0.02}
-            shadow-camera-near={1}
-            shadow-camera-far={80}
-            shadow-camera-left={-35}
-            shadow-camera-right={35}
-            shadow-camera-top={35}
-            shadow-camera-bottom={-35}
-          />
-          {/* Secondary rim light to lift silhouettes */}
-          <directionalLight position={[-10, 12, -8]} intensity={0.6} color={'#b8d4ff'} />
+          {snap?.gameMode === 'dark' ? (
+            <>
+              <hemisphereLight args={['#6b7a88', '#0c1018', 0.7]} />
+              <ambientLight intensity={0.18} />
+              <directionalLight position={[14,22,12]} intensity={0.55} color={'#3a4b66'} />
+            </>
+          ) : (
+            <>
+              <hemisphereLight args={['#e3f2ff', '#242a35', 1.4]} />
+              <ambientLight intensity={0.7} />
+              <directionalLight
+                position={[14, 22, 12]}
+                intensity={2.0}
+                castShadow
+                shadow-mapSize={[2048, 2048]}
+                shadow-bias={-0.00035}
+                shadow-normalBias={0.02}
+                shadow-camera-near={1}
+                shadow-camera-far={80}
+                shadow-camera-left={-35}
+                shadow-camera-right={35}
+                shadow-camera-top={35}
+                shadow-camera-bottom={-35}
+              />
+              <directionalLight position={[-10, 12, -8]} intensity={0.6} color={'#b8d4ff'} />
+            </>
+          )}
+          {snap?.gameMode === 'dark' && <Flashlight me={me} />}
           <PreloadAssets />
           <MapMeshes name={snap?.mapName || mapName} />
           {snap?.players.map(p => (
             <Avatar key={p.id} p={p} isSelf={p.id === selfId} isIt={snap?.itId === p.id} />
+          ))}
+          {/* Grapple rope visuals */}
+          {snap?.players.map(p => (
+            <GrappleRope key={p.id+':rope'} p={p} />
           ))}
           <FPCamera me={me} inputRef={inputRef} mapName={snap?.mapName || mapName} />
         </Suspense>
@@ -269,6 +282,46 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           </div>
         )
       })()}
+  {/* IT Ability HUD (bottom-right) */}
+  {(() => {
+    if (!snap) return null
+    if (snap.gameMode === 'noAbility') return null
+    if (snap.itId !== selfId) return null
+    const meP = snap.players.find(p => p.id === selfId)
+    if (!meP) return null
+    const ability = meP.itAbility || 'none'
+    if (ability === 'none') return null
+    const dashT = (meP as any).itDashT || 0
+    const dashCd = (meP as any).itDashCd || 0
+    const gAct = (meP as any).itGrappleActive || false
+    const gCd = (meP as any).itGrappleCd || 0
+    const boxStyle: React.CSSProperties = { position:'fixed', right:18, bottom:24, background:'#0d1528', padding:'12px 16px', borderRadius:12, width:200, fontSize:14, boxShadow:'0 6px 24px rgba(0,0,0,0.4)', border:'1px solid #1f2d46' }
+    const bar = (value: number, max: number, colorA = '#60a5fa', colorB = '#2563eb') => {
+      const pct = Math.max(0, Math.min(1, value / max))
+      return <div style={{ height:8, background:'#16253c', borderRadius:4, overflow:'hidden', boxShadow:'0 0 0 1px #203352 inset', marginTop:6 }}><div style={{ width:`${pct*100}%`, height:'100%', background:`linear-gradient(90deg,${colorA},${colorB})`, transition:'width 120ms linear' }} /></div>
+    }
+    if (ability === 'dash') {
+      const cdTotal = (constants.IT?.DASH_COOLDOWN || 6)
+      return (
+        <div style={boxStyle}>
+          <div style={{ fontWeight:600, letterSpacing:0.5 }}>Dash Ability</div>
+          {dashT > 0 ? <div style={{ color:'#7dd3fc', marginTop:4 }}>Active {dashT.toFixed(2)}s</div> : <div style={{ opacity:0.8, marginTop:4 }}>{dashCd > 0 ? `Cooldown ${dashCd.toFixed(1)}s` : 'Ready (Q)'}</div>}
+          {bar(cdTotal - dashCd, cdTotal)}
+        </div>
+      )
+    }
+    if (ability === 'grapple') {
+      const cdTotal = (constants.IT?.GRAPPLE_COOLDOWN || 8)
+      return (
+        <div style={boxStyle}>
+          <div style={{ fontWeight:600, letterSpacing:0.5 }}>Grapple Ability</div>
+          <div style={{ marginTop:4, color: gAct ? '#7dd3fc' : (gCd>0?'#9ca3af':'#7dd3fc') }}>{gAct ? 'Pulling...' : (gCd>0 ? `Cooldown ${gCd.toFixed(1)}s` : 'Ready (Q)')}</div>
+          {bar(cdTotal - gCd, cdTotal, '#34d399', '#059669')}
+        </div>
+      )
+    }
+    return null
+  })()}
     </>
   )
 }
@@ -352,42 +405,7 @@ const Avatar = memo(function Avatar({ p, isSelf, isIt }: { p: NetPlayer; isSelf:
     return tx
   }, [baseFaceTexture, faceVersion, p.faceData])
 
-  // Hat accessory meshes
-  const hatMesh = useMemo(() => {
-    if (p.hat === 'none') return null
-    const y = EYE + 0.05
-    if (p.hat === 'cap') {
-      return (
-        <group>
-          <mesh position={[0, y + 0.02, 0]} castShadow>
-            <sphereGeometry args={[0.38, 16, 12]} />
-            <meshStandardMaterial color="#222a3d" roughness={0.6} metalness={0.2} />
-          </mesh>
-          <mesh position={[0, y - 0.06, -0.22]} rotation={[Math.PI/2, 0, 0]} castShadow>
-            <cylinderGeometry args={[0.06, 0.12, 0.35, 12]} />
-            <meshStandardMaterial color="#222a3d" roughness={0.6} metalness={0.2} />
-          </mesh>
-        </group>
-      )
-    }
-    if (p.hat === 'cone') {
-      return (
-        <mesh position={[0, y + 0.12, 0]} castShadow>
-          <coneGeometry args={[0.32, 0.7, 16]} />
-          <meshStandardMaterial color="#ffb347" roughness={0.5} metalness={0.1} />
-        </mesh>
-      )
-    }
-    if (p.hat === 'halo') {
-      return (
-        <mesh position={[0, y + 0.25, 0]} rotation={[Math.PI/2,0,0]}>
-          <torusGeometry args={[0.42, 0.07, 16, 32]} />
-          <meshStandardMaterial color="#ffe066" emissive="#ffea8a" emissiveIntensity={0.8} metalness={0.3} roughness={0.2} />
-        </mesh>
-      )
-    }
-    return null
-  }, [p.hat])
+  const hatMesh = useMemo(() => accessoryMesh(p.hat as any, EYE, faceY, 'game'), [p.hat, EYE, faceY])
 
   // Third-person simple animations: lean/tilt on wallrun and slide
   const animRef = useRef<THREE.Group>(null)
@@ -429,7 +447,7 @@ const Avatar = memo(function Avatar({ p, isSelf, isIt }: { p: NetPlayer; isSelf:
             <meshBasicMaterial map={customFaceTexRef.current || defaultSmileTexture} transparent side={THREE.DoubleSide} />
           </mesh>
           {hatMesh}
-          <NameTag name={p.name} y={EYE + 0.35} />
+          <NameTag name={p.name} y={EYE + 0.6} />
         </group>
       )}
     </group>
@@ -860,4 +878,60 @@ function PreloadAssets() {
   )
   useLoader(TextureLoader, urls)
   return null
+}
+
+// Flashlight component for dark mode (spotlight from player camera)
+function Flashlight({ me }: { me: NetPlayer | null }) {
+  const { camera, scene } = useThree()
+  const lightRef = useRef<THREE.SpotLight>(null)
+  useFrame(() => {
+    if (!lightRef.current || !me) return
+    lightRef.current.position.copy(camera.position)
+    // Aim where camera looks
+    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)
+    lightRef.current.target.position.copy(camera.position.clone().add(dir.multiplyScalar(10)))
+    lightRef.current.target.updateMatrixWorld()
+  })
+  return (
+    <>
+      <spotLight ref={lightRef} angle={0.5} penumbra={0.35} intensity={3.2} distance={40} color="#e0ecff" castShadow />
+      <pointLight position={[camera.position.x, camera.position.y, camera.position.z]} intensity={0.3} distance={8} color="#9fc5ff" />
+    </>
+  )
+}
+
+// Renders a dynamic line from IT player to grapple target while active
+function GrappleRope({ p }: { p: NetPlayer }) {
+  const geomRef = useRef<THREE.BufferGeometry>()
+  const matRef = useRef<THREE.LineBasicMaterial>()
+  const lineRef = useRef<THREE.Line>()
+  // Lazy init
+  if (!geomRef.current) {
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(2 * 3), 3))
+    geomRef.current = g
+  }
+  if (!matRef.current) {
+    matRef.current = new THREE.LineBasicMaterial({ color:'#34d399', transparent:true, opacity:0.85 })
+  }
+  if (!lineRef.current) {
+    lineRef.current = new THREE.Line(geomRef.current, matRef.current)
+  }
+  useFrame(() => {
+    if (!lineRef.current || !geomRef.current || !matRef.current) return
+    const active = p.itGrappleActive && p.itGrappleTarget
+    lineRef.current.visible = !!active
+    if (!active) return
+    const start = new THREE.Vector3(p.pos[0], p.pos[1] + (constants.PLAYER?.HEIGHT ?? 1.8) * 0.55, p.pos[2])
+    const end = new THREE.Vector3(p.itGrappleTarget!.x, p.itGrappleTarget!.y, p.itGrappleTarget!.z)
+    const posAttr = geomRef.current.getAttribute('position') as THREE.BufferAttribute
+    posAttr.setXYZ(0, start.x, start.y, start.z)
+    posAttr.setXYZ(1, end.x, end.y, end.z)
+    posAttr.needsUpdate = true
+    // Pulse rope color
+    const t = performance.now() * 0.001
+    const pul = (Math.sin(t * 5.6) * 0.5 + 0.5) * 0.35 + 0.65
+    matRef.current.color.setRGB(0.18 * pul, 0.85 * pul, 0.55 * pul)
+  })
+  return <primitive object={lineRef.current!} />
 }

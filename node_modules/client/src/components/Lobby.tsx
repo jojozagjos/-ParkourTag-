@@ -2,10 +2,15 @@ import React from 'react'
 import type { Socket } from 'socket.io-client'
 import type { PlayerSummary } from '../App'
 import constants from '../../../shared/constants.json'
-export default function Lobby({ socket, roomCode, players, selfId, maps, mapName, voteCounts }: { socket: Socket, roomCode: string, players: PlayerSummary[], selfId: string, maps: string[], mapName: string, voteCounts: Record<string, number> }) {
+export default function Lobby({ socket, roomCode, players, selfId, maps, mapName, voteCounts, gameMode }: { socket: Socket, roomCode: string, players: PlayerSummary[], selfId: string, maps: string[], mapName: string, voteCounts: Record<string, number>, gameMode: 'default' | 'noAbility' | 'dark' }) {
   const me = players.find(p => p.id === selfId)
   const isHost = !!me?.host
   const readyCount = players.filter(p => p.ready).length
+  const modeDescriptions: Record<string, string> = {
+    default: 'Default: standard play. IT may use their selected ability (dash or grapple).',
+    noAbility: 'No Ability: all IT abilities disabled — pure chase/parkour without special tools.',
+    dark: 'Dark Mode: low ambient light; players use personal flashlights. Abilities may still apply depending on mode settings.'
+  }
 
   function toggleReady() { socket.emit('lobby:ready', { ready: !me?.ready }) }
   function startGame() { socket.emit('game:start') }
@@ -52,6 +57,23 @@ export default function Lobby({ socket, roomCode, players, selfId, maps, mapName
               <button onClick={toggleReady}>{me?.ready ? 'Unready' : 'Ready'}</button>
               {isHost && <button onClick={startGame} className="secondary">Start</button>}
             </div>
+            {isHost && (
+              <div style={{ marginTop: 10 }}>
+                <label style={{ display: 'block', marginBottom: 6 }}>Game Mode</label>
+                <select value={gameMode} onChange={e => socket.emit('room:setMode', { gameMode: e.target.value })}>
+                  <option title="Default play" value="default">Default</option>
+                  <option title="Disable IT abilities" value="noAbility">No Ability</option>
+                  <option title="Lower ambient light, enable flashlights" value="dark">Dark Mode (Flashlights)</option>
+                </select>
+                <div style={{ marginTop: 8, fontSize: 13, color: '#9aa3b2' }}>{modeDescriptions[gameMode] || ''}</div>
+              </div>
+            )}
+            {!isHost && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 13, color: '#9aa3b2' }}><strong>Mode:</strong> {gameMode}</div>
+                <div style={{ marginTop: 6, fontSize: 13, color: '#9aa3b2' }}>{modeDescriptions[gameMode] || ''}</div>
+              </div>
+            )}
             <div className="helper" style={{ marginTop: 12 }}>
               Ready: {readyCount}/{players.length}. The server enforces minimum players; start will fail if not enough.
             </div>

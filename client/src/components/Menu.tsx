@@ -3,6 +3,7 @@ import type { Socket } from 'socket.io-client'
 import { getSettings, setSettings, subscribe, resetSettings } from '../state/settings'
 import { Canvas, useLoader } from '@react-three/fiber'
 import * as THREE from 'three'
+import { accessoryMesh } from './accessories'
 import constants from '../../../shared/constants.json'
 import faceTexturePath from '../../assets/textures/face.png'
 
@@ -11,7 +12,8 @@ export default function Menu({ socket }: { socket: Socket }) {
   const [joinCode, setJoinCode] = useState('')
   const [color, setColor] = useState('#f0b46d')
   const [face, setFace] = useState<'smile'>('smile')
-  const [hat, setHat] = useState<'none' | 'cap' | 'cone' | 'halo'>('none')
+  const [hat, setHat] = useState<'none' | 'cone' | 'halo' | 'glasses' | 'shades' | 'headphones' | 'bandana' | 'visor' | 'mask'>('none')
+  const [itAbility, setItAbility] = useState<'dash' | 'grapple'>('dash')
   const [faceData, setFaceData] = useState<string | null>(null)
   const [screen, setScreen] = useState<'home' | 'customize' | 'settings'>('home')
   useEffect(() => {
@@ -22,10 +24,14 @@ export default function Menu({ socket }: { socket: Socket }) {
       if (s) setColor(s)
   const f = localStorage.getItem('playerFace')
   if (f === 'smile') setFace('smile')
-      const h = localStorage.getItem('playerHat')
-      if (h === 'none' || h === 'cap' || h === 'cone' || h === 'halo') setHat(h)
-      const fd = localStorage.getItem('playerFaceData')
+  const h = localStorage.getItem('playerHat')
+  if (h && ['none','cone','halo','glasses','shades','headphones','bandana','visor','mask'].includes(h)) setHat(h as any)
+  const fd = localStorage.getItem('playerFaceData')
       if (fd && fd.startsWith('data:image/png')) setFaceData(fd)
+  const ab = localStorage.getItem('playerItAbility')
+  if (ab === 'dash' || ab === 'grapple') setItAbility(ab)
+  if (ab === 'none') setItAbility('dash')
+  // gameMode selection now lives in the lobby (host can change it there)
     } catch {}
   }, [])
 
@@ -37,8 +43,8 @@ export default function Menu({ socket }: { socket: Socket }) {
     socket.emit('player:update', { name: trimmed })
   }
 
-  function host() { socket.emit('room:create', { name }); socket.emit('player:update', { name, color, face, hat, faceData }) }
-  function join() { if (joinCode) { socket.emit('room:join', { code: joinCode.toUpperCase(), name }); socket.emit('player:update', { name, color, face, hat, faceData }) } }
+  function host() { socket.emit('room:create', { name }); socket.emit('player:update', { name, color, face, hat, faceData, itAbility }) }
+  function join() { if (joinCode) { socket.emit('room:join', { code: joinCode.toUpperCase(), name }); socket.emit('player:update', { name, color, face, hat, faceData, itAbility }) } }
   function saveColor(c: string) {
     setColor(c)
     try { localStorage.setItem('playerColor', c) } catch {}
@@ -55,10 +61,19 @@ export default function Menu({ socket }: { socket: Socket }) {
     try { localStorage.setItem('playerFace', v) } catch {}
     socket.emit('player:update', { face: v })
   }
-  function saveHat(v: 'none' | 'cap' | 'cone' | 'halo') {
+  function saveHat(v: 'none' | 'cone' | 'halo' | 'glasses' | 'shades' | 'headphones' | 'bandana' | 'visor' | 'mask') {
     setHat(v)
     try { localStorage.setItem('playerHat', v) } catch {}
     socket.emit('player:update', { hat: v })
+  }
+  function saveItAbility(v: 'dash' | 'grapple') {
+    setItAbility(v)
+    try { localStorage.setItem('playerItAbility', v) } catch {}
+    socket.emit('player:update', { itAbility: v })
+  }
+  function saveGameMode(v: 'default' | 'noAbility' | 'dark') {
+    // deprecated: gameMode is set in the lobby. Kept for backward compatibility in localStorage only.
+    try { localStorage.setItem('gameMode', v) } catch {}
   }
   function saveFaceDataUrl(dataUrl: string | null) {
     setFaceData(dataUrl)
@@ -103,7 +118,8 @@ export default function Menu({ socket }: { socket: Socket }) {
                 <button onClick={join} className="secondary" title="Join existing lobby" disabled={!joinCode || joinCode.trim().length < 3}>Join</button>
                 <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Room code" maxLength={5} style={{ width: 110, textTransform:'uppercase' }} />
               </div>
-              <div className="helper">Host to generate a 5‑char code and share with friends.<br />Movement: WASD + Space + Shift + C (slide). Esc: pause/settings.</div>
+              {/* Game mode selection moved to the lobby screen so the host can change it after creating the room. */}
+              <div className="helper">Host to generate a 5‑char code and share with friends.<br />Movement: WASD + Space + Shift + C (slide), Q: ability (IT only).</div>
             </div>
           </section>
         )}
@@ -130,10 +146,23 @@ export default function Menu({ socket }: { socket: Socket }) {
                   <label>Accessory</label>
                   <select value={hat} onChange={e => saveHat(e.target.value as any)}>
                     <option value="none">None</option>
-                    <option value="cap">Cap</option>
                     <option value="cone">Cone</option>
                     <option value="halo">Halo</option>
+                    <option value="glasses">Glasses</option>
+                    <option value="shades">Shades</option>
+                    <option value="headphones">Headphones</option>
+                    <option value="bandana">Bandana</option>
+                    <option value="visor">Visor</option>
+                    <option value="mask">Mask</option>
                   </select>
+                </div>
+                <div className="field-group">
+                  <label>IT Ability (when you become IT)</label>
+                  <select value={itAbility} onChange={e => saveItAbility(e.target.value as any)}>
+                    <option value="dash">Dash Burst</option>
+                    <option value="grapple">Grapple Hook</option>
+                  </select>
+                  <div className="helper" style={{ marginTop:4 }}>The selected ability only activates if the lobby mode allows abilities.</div>
                 </div>
                 <div className="helper">Changes apply immediately and will appear for other players after joining.</div>
               </div>
@@ -195,7 +224,7 @@ function MenuSettings() {
   )
 }
 
-function AvatarPreview({ color, face, hat, faceData }: { color: string, face: 'smile', hat: 'none' | 'cap' | 'cone' | 'halo', faceData: string | null }) {
+function AvatarPreview({ color, face, hat, faceData }: { color: string, face: 'smile', hat: 'none' | 'cone' | 'halo' | 'glasses' | 'shades' | 'headphones' | 'bandana' | 'visor' | 'mask', faceData: string | null }) {
   return (
     <Canvas style={{ width:'100%', height:'100%' }} camera={{ position:[2.1, 1.6, 2.6], fov: 50 }} shadows dpr={Math.min(window.devicePixelRatio||1, 1.5)}>
       <ambientLight intensity={0.6} />
@@ -205,7 +234,7 @@ function AvatarPreview({ color, face, hat, faceData }: { color: string, face: 's
   )
 }
 
-function PreviewContent({ color, face, hat, faceData }: { color: string, face: 'smile', hat: 'none' | 'cap' | 'cone' | 'halo', faceData: string | null }) {
+function PreviewContent({ color, face, hat, faceData }: { color: string, face: 'smile', hat: 'none' | 'cone' | 'halo' | 'glasses' | 'shades' | 'headphones' | 'bandana' | 'visor' | 'mask', faceData: string | null }) {
   const faceTexture = useLoader(THREE.TextureLoader, faceTexturePath)
   const group = useRef<THREE.Group>(null)
   const lastDragX = useRef<number | null>(null)
@@ -255,6 +284,9 @@ function PreviewContent({ color, face, hat, faceData }: { color: string, face: '
 
   const bodyColor = useMemo(() => new THREE.Color(/^#/.test(color)? color : '#f0b46d'), [color])
 
+  // Ensure the avatar faces the camera initially
+  React.useEffect(() => { if (group.current) group.current.rotation.y = Math.PI }, [])
+
   return (
     <group ref={group} position={[0,-0.55,0]} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} onPointerMove={onPointerMove}>
       <mesh position={[0, H/2, 0]} castShadow receiveShadow>
@@ -265,30 +297,7 @@ function PreviewContent({ color, face, hat, faceData }: { color: string, face: '
         <planeGeometry args={[0.7, 0.7]} />
         <meshBasicMaterial map={faceTex} transparent side={THREE.DoubleSide} />
       </mesh>
-      {hat !== 'none' && (
-        hat === 'cap' ? (
-          <group>
-            <mesh position={[0, EYE + 0.07, 0]} castShadow>
-              <sphereGeometry args={[0.38, 16, 12]} />
-              <meshStandardMaterial color="#222a3d" roughness={0.6} metalness={0.2} />
-            </mesh>
-            <mesh position={[0, EYE - 0.01, -0.22]} rotation={[Math.PI/2, 0, 0]} castShadow>
-              <cylinderGeometry args={[0.06, 0.12, 0.35, 12]} />
-              <meshStandardMaterial color="#222a3d" roughness={0.6} metalness={0.2} />
-            </mesh>
-          </group>
-        ) : hat === 'cone' ? (
-          <mesh position={[0, EYE + 0.2, 0]} castShadow>
-            <coneGeometry args={[0.32, 0.7, 16]} />
-            <meshStandardMaterial color="#ffb347" roughness={0.5} metalness={0.1} />
-          </mesh>
-        ) : (
-          <mesh position={[0, EYE + 0.28, 0]} rotation={[Math.PI/2,0,0]}>
-            <torusGeometry args={[0.42, 0.07, 16, 32]} />
-            <meshStandardMaterial color="#ffe066" emissive="#ffea8a" emissiveIntensity={0.8} metalness={0.3} roughness={0.2} />
-          </mesh>
-        )
-      )}
+      {accessoryMesh(hat as any, EYE, EYE - 0.17, 'preview')}
       <mesh position={[0,-0.01,0]} rotation={[-Math.PI/2,0,0]} receiveShadow>
         <circleGeometry args={[3, 32]} />
         <meshStandardMaterial color="#0a0f1a" />
