@@ -542,8 +542,8 @@ function physicsStep(room, dt) {
 
     const isSprinting = p.onGround && !!inp.sprint && !!inp.forward
     const accelBase = p.onGround ? P.MOVE_ACCEL : P.AIR_ACCEL
-    const accel = accelBase * (isSprinting ? 1.5 : 1.0)
-    const maxSpeed = isSprinting ? P.MAX_SPEED * P.SPRINT_MULT : P.MAX_SPEED
+  const accel = accelBase * (isSprinting ? 1.5 : 1.0)
+  let maxSpeed = isSprinting ? P.MAX_SPEED * P.SPRINT_MULT : P.MAX_SPEED
     if ((p.chainT || 0) > 0) maxSpeed *= (P.CHAIN_SPEED_MULT || 1.0)
 
     p.vel[0] += wishX * accel * dt
