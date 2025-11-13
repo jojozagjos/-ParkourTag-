@@ -202,7 +202,15 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       >
         <Suspense fallback={null}>
           {/* Sky & lighting adjust for dark mode */}
-          <Skybox />
+          <Skybox
+            topColor={snap?.gameMode === 'dark' ? '#000000' : undefined}
+            bottomColor={snap?.gameMode === 'dark' ? '#000000' : undefined}
+            sunColor={snap?.gameMode === 'dark' ? '#dfeeff' : undefined}
+            sunIntensity={snap?.gameMode === 'dark' ? 0.6 : undefined}
+            sunDir={snap?.gameMode === 'dark' ? [ -0.3, 0.45, -0.2 ] : undefined}
+            bottomDarkness={snap?.gameMode === 'dark' ? 0.24 : undefined}
+            bottomPower={snap?.gameMode === 'dark' ? 2.0 : undefined}
+          />
           {snap?.gameMode === 'dark' ? (
             <>
               <hemisphereLight args={['#6b7a88', '#0c1018', 0.7]} />
@@ -634,7 +642,18 @@ function FPCamera({ me, inputRef, mapName }: { me: NetPlayer | null; inputRef: R
 
     // ---------- Speed-based FOV ----------
     const speed = Math.hypot(me.vel[0], me.vel[2])
-    const targetFov = Math.max(BASE_FOV, Math.min(MAX_FOV, BASE_FOV + speed * SPEED_FOV_GAIN))
+    let targetFov = Math.max(BASE_FOV, Math.min(MAX_FOV, BASE_FOV + speed * SPEED_FOV_GAIN))
+    // Dash FOV kick: give a short, smoothed FOV bump while dashing for perceived speed
+    try {
+      const dashT = (me as any).itDashT || 0
+      const dashMax = (constants.IT?.DASH_TIME || 0.8)
+      if (dashT > 0) {
+        const frac = Math.max(0, Math.min(1, dashT / dashMax))
+        // stronger at the start, ease off towards end
+        const bump = 10 * (1 - Math.pow(frac, 0.9))
+        targetFov += bump
+      }
+    } catch {}
     fovRef.current += (targetFov - fovRef.current) * Math.min(1, dt * 2.5)
 
     // ---------- Bob / sway driver ----------
@@ -1040,25 +1059,65 @@ function GrapplePreview({ me, mapName }: { me: NetPlayer | null; mapName?: strin
 
 // Dash visual effects (simple burst at start + trailing pulse while active)
 function DashEffects({ snap }: { snap: Snapshot | null }) {
+  // Improved dash visuals: fading rings and short trail particles per dashing player.
+  // This is lightweight: we spawn a few simple meshes per dash and fade them out.
   const groupRef = useRef<THREE.Group>(null)
-  useFrame(() => {
+  // particle pool to avoid allocations
+  const poolRef = useRef<Array<THREE.Mesh>>([])
+  const activeRef = useRef<Array<{ mesh: THREE.Mesh; life: number }>>([])
+
+  function makeRing() {
+    const geo = new THREE.RingGeometry(0.2, 0.6, 18)
+    const mat = new THREE.MeshStandardMaterial({ color: '#60a5fa', emissive: '#2563eb', emissiveIntensity: 0.9, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+    const m = new THREE.Mesh(geo, mat)
+    m.rotation.x = -Math.PI / 2
+    m.renderOrder = 999
+    return m
+  }
+
+  useFrame((_, dt) => {
     if (!groupRef.current || !snap) return
-    while (groupRef.current.children.length) groupRef.current.remove(groupRef.current.children[0])
+    // decay active particles
+    for (let i = activeRef.current.length - 1; i >= 0; i--) {
+      const rec = activeRef.current[i]
+      rec.life -= dt
+      const frac = Math.max(0, rec.life / 0.6)
+      const mat = rec.mesh.material as THREE.MeshStandardMaterial
+      mat.opacity = Math.min(1, frac)
+      mat.emissiveIntensity = 0.6 * frac
+      rec.mesh.scale.setScalar(1 + (1 - frac) * 1.5)
+      if (rec.life <= 0) {
+        try { groupRef.current.remove(rec.mesh) } catch {}
+        activeRef.current.splice(i, 1)
+        poolRef.current.push(rec.mesh)
+      }
+    }
+
+    // spawn for currently dashing players
     for (const p of snap.players) {
       const dashT = (p as any).itDashT || 0
-      if (snap.itId !== p.id || p.itAbility !== 'dash' || dashT <= 0) continue
-      const just = (dashT > (constants.IT?.DASH_TIME || 0.8) - 0.05)
-      if (just) {
-        const burst = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.9, 24, 1), new THREE.MeshStandardMaterial({ color: '#3b82f6', emissive: '#1d4ed8', emissiveIntensity: 1.2, transparent: true, opacity: 0.8 }))
-        burst.rotation.x = -Math.PI / 2
-        burst.position.set(p.pos[0], p.pos[1] + 0.05, p.pos[2])
-        groupRef.current.add(burst)
+      if (p.itAbility !== 'dash' || dashT <= 0) continue
+      // spawn occasional rings while dash active
+      const spawnRate = 0.06 // spawn roughly every 60ms (scaled by frame)
+      if (Math.random() < Math.min(1, (dt / spawnRate))) {
+        const m = poolRef.current.pop() || makeRing()
+        m.position.set(p.pos[0], p.pos[1] + 0.5, p.pos[2])
+        // orient ring to ground and align with velocity to create sense of motion
+        m.rotation.y = p.yaw
+        m.scale.setScalar(0.6)
+        groupRef.current.add(m)
+        activeRef.current.push({ mesh: m, life: 0.6 })
       }
-      const trail = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), new THREE.MeshBasicMaterial({ color: '#60a5fa', transparent: true, opacity: 0.35 }))
+      // short stretched quad trail (cheap) in direction of travel, only one per player per frame
+      const trail = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.18), new THREE.MeshStandardMaterial({ color: '#60a5fa', transparent: true, opacity: 0.28, side: THREE.DoubleSide }))
       trail.position.set(p.pos[0], p.pos[1] + 0.9, p.pos[2])
-      trail.rotation.y = p.yaw + Math.PI
+      trail.rotation.x = -Math.PI / 2
+      trail.rotation.z = p.yaw
       groupRef.current.add(trail)
+      // schedule fade removal quickly
+      activeRef.current.push({ mesh: trail, life: 0.22 })
     }
   })
+
   return <group ref={groupRef} />
 }
