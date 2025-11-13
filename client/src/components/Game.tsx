@@ -213,9 +213,10 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           />
           {snap?.gameMode === 'dark' ? (
             <>
-              <hemisphereLight args={['#6b7a88', '#0c1018', 0.7]} />
-              <ambientLight intensity={0.18} />
-              <directionalLight position={[14,22,12]} intensity={0.55} color={'#3a4b66'} />
+              {/* Very low global lighting in dark mode — rely on the player's flashlight for visibility */}
+              <hemisphereLight args={['#000000', '#000000', 0.02]} />
+              <ambientLight intensity={0.01} />
+              {/* No directional 'moon' light so the scene is mostly dark; Flashlight component will provide the usable light */}
             </>
           ) : (
             <>
@@ -246,7 +247,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           ))}
           {/* Grapple rope visuals */}
           {snap?.players.map(p => (
-            <GrappleRope key={p.id+':rope'} p={p} />
+            <GrappleRope key={p.id+':rope'} p={p} isSelf={p.id === selfId} />
           ))}
           {/* Grapple target preview for self when ready */}
           <GrapplePreview me={me} mapName={snap?.mapName || mapName} />
@@ -924,8 +925,9 @@ function Flashlight({ me }: { me: NetPlayer | null }) {
 }
 
 // Renders a dynamic line from IT player to grapple target while active
-function GrappleRope({ p }: { p: NetPlayer }) {
+function GrappleRope({ p, isSelf }: { p: NetPlayer; isSelf?: boolean }) {
   // We'll render a short cylinder between the player's eye/hand origin and the grapple target.
+  const { camera } = useThree()
   const meshRef = useRef<THREE.Mesh | null>(null)
   const geomRef = useRef<THREE.CylinderGeometry | null>(null)
   const matRef = useRef<THREE.MeshStandardMaterial | null>(null)
@@ -945,12 +947,21 @@ function GrappleRope({ p }: { p: NetPlayer }) {
     meshRef.current.visible = active
     if (!active) return
 
-    // Player eye origin (slightly forward to be near face/hand)
-    const eyeH = (constants.PLAYER?.EYE_HEIGHT ?? 1.62)
-    const origin = new THREE.Vector3(p.pos[0], p.pos[1] + eyeH - 0.25, p.pos[2])
-    // forward vector from yaw
-    const fw = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, p.yaw, 0))
-    origin.addScaledVector(fw, 0.28)
+    // Rope origin: for the local player, derive from camera so it is offset from center
+    let origin: THREE.Vector3
+    if (isSelf && camera) {
+      const camPos = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize()
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize()
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize()
+      // offset to the right (hand) and slightly down so the rope starts from the hand/face area
+      origin = camPos.clone().add(right.multiplyScalar(0.28)).add(up.multiplyScalar(-0.15)).add(forward.multiplyScalar(0.12))
+    } else {
+      const eyeH = (constants.PLAYER?.EYE_HEIGHT ?? 1.62)
+      origin = new THREE.Vector3(p.pos[0], p.pos[1] + eyeH - 0.25, p.pos[2])
+      const fw = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, p.yaw, 0))
+      origin.addScaledVector(fw, 0.28)
+    }
 
     const target = new THREE.Vector3((p.itGrappleTarget as any).x, (p.itGrappleTarget as any).y, (p.itGrappleTarget as any).z)
     const dir = new THREE.Vector3().subVectors(target, origin)
