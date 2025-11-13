@@ -117,6 +117,7 @@ function makePlayer(id, name) {
     slideT: 0,
   slideCd: 0,
     chainT: 0,
+  chainStacks: 0,
     crouchSince: 0,
     // jump buffer & tic-tac
     jumpBufferedT: 0,
@@ -485,7 +486,8 @@ function doWallrun(p, inp, dt, mapData) {
     p.mode = 'air'
     p._wallrunCooldown = P.WALLRUN_COOLDOWN * 0.5
     p._wallRunActive = false
-    p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.4))
+  p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.4))
+  p.chainStacks = Math.min((P.CHAIN_MAX_STACKS || 5), (p.chainStacks || 0) + 1)
     return 'jump'
   }
 
@@ -537,7 +539,8 @@ function physicsStep(room, dt) {
         p.pos[1] = p.mantleToY
         p.vel[1] = Math.max(p.vel[1], 2.0)
         p.mode = 'air'
-        p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.3))
+  p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.3))
+  p.chainStacks = Math.min((P.CHAIN_MAX_STACKS || 5), (p.chainStacks || 0) + 1)
       }
       // Skip rest of physics this tick for mantle
       // Still emit snapshot later in loop
@@ -564,7 +567,14 @@ function physicsStep(room, dt) {
     if (p.itAbility === 'dash' && p.itDashT > 0 && room.gameMode !== 'noAbility' && (room.gameMode === 'runners' || room.itId === p.id)) {
       maxSpeed *= (IT.DASH_SPEED_MULT || 1.5)
     }
-    if ((p.chainT || 0) > 0) maxSpeed *= (P.CHAIN_SPEED_MULT || 1.0)
+    // Chain-based speed multiplier scales with accumulated chain stacks.
+    const chainStacks = (p.chainStacks || 0)
+    if (chainStacks > 0) {
+      const maxStacks = (P.CHAIN_MAX_STACKS || 5)
+      const baseMult = (P.CHAIN_SPEED_MULT || 1.0)
+      const chainMultiplier = 1 + (baseMult - 1) * (Math.min(chainStacks, maxStacks) / maxStacks)
+      maxSpeed *= chainMultiplier
+    }
 
     p.vel[0] += wishX * accel * dt
     p.vel[2] += wishZ * accel * dt
@@ -683,6 +693,7 @@ function physicsStep(room, dt) {
           p.itGrappleActive = false
           p.itGrappleTarget = null
           p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.45))
+          p.chainStacks = Math.min((P.CHAIN_MAX_STACKS || 5), (p.chainStacks || 0) + 1)
           io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
         }
         // Abort if progress stalls (distance not decreasing significantly) or timeout exceeded
@@ -745,6 +756,7 @@ function physicsStep(room, dt) {
           p.pos[2] += dir[2] * 0.03
           // Refresh chain window when successfully tic-tacing
           p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.45))
+          p.chainStacks = Math.min((P.CHAIN_MAX_STACKS || 5), (p.chainStacks || 0) + 1)
           // Slightly shorter cooldown so players can string tics more reliably
           p.tictacCd = (P.TICTAC_COOLDOWN || 0.28) * 0.85
           io.to(room.code).emit('sfx', { kind: 'tictac', id: p.id })
@@ -780,6 +792,7 @@ function physicsStep(room, dt) {
           p.slideT = P.SLIDE_DURATION
           // Starting a slide counts toward chaining
           p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.5))
+          p.chainStacks = Math.min((P.CHAIN_MAX_STACKS || 5), (p.chainStacks || 0) + 1)
           io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
         } else {
           // Not enough clearance: enter crouch instead
@@ -803,7 +816,8 @@ function physicsStep(room, dt) {
         p.mode = 'air'
         p.slideT = 0
         p.slideCd = Math.max(p.slideCd || 0, (P.SLIDE_COOLDOWN || 0.7))
-        p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.5))
+  p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.5))
+  p.chainStacks = Math.min((P.CHAIN_MAX_STACKS || 5), (p.chainStacks || 0) + 1)
         io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
       }
       p.slideT -= dt
@@ -872,6 +886,8 @@ function physicsStep(room, dt) {
   p.tictacCd = Math.max(0, (p.tictacCd || 0) - dt)
   p.slideCd = Math.max(0, (p.slideCd || 0) - dt)
     p.chainT = Math.max(0, (p.chainT || 0) - dt)
+    // Decay fractional chain stacks over time so players must keep chaining to maintain bonus
+    p.chainStacks = Math.max(0, (p.chainStacks || 0) - (dt / (P.CHAIN_STACK_DECAY || 3.0)))
 
     // Allow mantling while falling: if holding jump and moving downward near a ledge, attempt a catch
     // This makes catching an edge while dropping easier than the short jump-edge coyote window
@@ -950,7 +966,8 @@ function snapshot(room) {
       id: p.id, name: p.name,
       pos: p.pos, vel: p.vel, yaw: p.yaw, pitch: p.pitch,
       onGround: !!p.onGround, mode: p.mode,
-      chainT: p.chainT,
+  chainT: p.chainT,
+  chainStacks: p.chainStacks || 0,
       itAbility: p.itAbility,
       itDashT: p.itDashT, itDashCd: p.itDashCd,
     itGrappleActive: p.itGrappleActive, itGrappleCd: p.itGrappleCd,

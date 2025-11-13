@@ -342,12 +342,13 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       {paused && <PauseMenu socket={socket} onClose={() => { setPausedGlobal(false); setPaused(false) }} />}
       {/* Bottom-center chain bar */}
       {(() => {
-        const ct = (me as any)?.chainT as number | undefined
-        const active = typeof ct === 'number' && ct > 0
+        const stacks = (me as any)?.chainStacks as number | undefined
+        const active = typeof stacks === 'number' && stacks > 0
         if (!active) return null
-        const total = (constants as any).CHAIN_TIME || 1
-        const mult = (constants as any).CHAIN_SPEED_MULT || 1.2
-        const pct = Math.max(0, Math.min(1, ct / total))
+        const maxStacks = (constants as any).PLAYER?.CHAIN_MAX_STACKS || 5
+        const baseMult = (constants as any).PLAYER?.CHAIN_SPEED_MULT || 1.25
+        const mult = 1 + (baseMult - 1) * (Math.min(stacks || 0, maxStacks) / maxStacks)
+        const pct = Math.max(0, Math.min(1, (stacks || 0) / maxStacks))
         return (
           <div style={{ position:'fixed', left:'50%', transform:'translateX(-50%)', bottom: 24, zIndex: 1000, width: 'min(60vw, 560px)' }}>
             <div style={{ display:'flex', justifyContent:'center', gap:8, fontWeight:700, letterSpacing:0.5, marginBottom: 6 }}>
@@ -1086,8 +1087,15 @@ function GrappleRope({ p, isSelf, localTarget, localActive }: { p: NetPlayer; is
     meshRef.current.quaternion.copy(q)
 
     // scale: Y controls length, X/Z control thickness
-  const ropeRadius = 0.09 // slightly thicker rope so it's more visible in first-person
-    meshRef.current.scale.set(ropeRadius, len * 0.5, ropeRadius)
+    // The base cylinder geometry was created with height=1 and radius=0.5, so
+    // scale factors must be relative to those base sizes. Previously we used
+    // absolute values which made long ropes render incorrectly (very thin or
+    // not visually noticeable at distance). Use relative scaling so a desired
+    // rope radius maps correctly to the geometry.
+    const ropeRadius = 0.09 // desired rope radius in world units
+    const baseRadius = 0.5 // radius used when creating the CylinderGeometry
+    const radiusScale = ropeRadius / baseRadius
+    meshRef.current.scale.set(radiusScale, len, radiusScale)
 
     // animate emissive pulse
     if (matRef.current) {
