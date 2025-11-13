@@ -906,107 +906,134 @@ function Flashlight({ me }: { me: NetPlayer | null }) {
 
 // Renders a dynamic line from IT player to grapple target while active
 function GrappleRope({ p }: { p: NetPlayer }) {
-  const geomRef = useRef<THREE.BufferGeometry>()
-  const matRef = useRef<THREE.LineBasicMaterial>()
-  const lineRef = useRef<THREE.Line>()
-  // Lazy init
+  // We'll render a short cylinder between the player's eye/hand origin and the grapple target.
+  const meshRef = useRef<THREE.Mesh | null>(null)
+  const geomRef = useRef<THREE.CylinderGeometry | null>(null)
+  const matRef = useRef<THREE.MeshStandardMaterial | null>(null)
+
   if (!geomRef.current) {
-    const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(2 * 3), 3))
-    geomRef.current = g
+    // unit cylinder aligned on Y with height 1; we'll scale it per-frame
+    geomRef.current = new THREE.CylinderGeometry(0.5, 0.5, 1, 10, 1, true)
+    geomRef.current.computeBoundingSphere()
   }
   if (!matRef.current) {
-    matRef.current = new THREE.LineBasicMaterial({ color:'#34d399', transparent:true, opacity:0.85 })
+    matRef.current = new THREE.MeshStandardMaterial({ color: '#34d399', emissive: '#064e3b', emissiveIntensity: 0.6, metalness: 0.1, roughness: 0.6, transparent: true, opacity: 0.95 })
   }
-  if (!lineRef.current) {
-    lineRef.current = new THREE.Line(geomRef.current, matRef.current)
-  }
+
   useFrame(() => {
-    if (!lineRef.current || !geomRef.current || !matRef.current) return
-  const active = p.itGrappleActive && p.itGrappleTarget
-    lineRef.current.visible = !!active
+    if (!meshRef.current) return
+    const active = !!(p.itGrappleActive && p.itGrappleTarget)
+    meshRef.current.visible = active
     if (!active) return
-  // Rope origin: from face forward a bit and down toward hand position
-  const eyeH = (constants.PLAYER?.EYE_HEIGHT ?? 1.62)
-  const start = new THREE.Vector3(p.pos[0], p.pos[1] + eyeH - 0.25, p.pos[2])
-    const end = new THREE.Vector3(p.itGrappleTarget!.x, p.itGrappleTarget!.y, p.itGrappleTarget!.z)
-    const posAttr = geomRef.current.getAttribute('position') as THREE.BufferAttribute
-    posAttr.setXYZ(0, start.x, start.y, start.z)
-    posAttr.setXYZ(1, end.x, end.y, end.z)
-    posAttr.needsUpdate = true
-    // Pulse rope color
-    const t = performance.now() * 0.001
-    const pul = (Math.sin(t * 5.6) * 0.5 + 0.5) * 0.35 + 0.65
-    matRef.current.color.setRGB(0.18 * pul, 0.85 * pul, 0.55 * pul)
+
+    // Player eye origin (slightly forward to be near face/hand)
+    const eyeH = (constants.PLAYER?.EYE_HEIGHT ?? 1.62)
+    const origin = new THREE.Vector3(p.pos[0], p.pos[1] + eyeH - 0.25, p.pos[2])
+    // forward vector from yaw
+    const fw = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, p.yaw, 0))
+    origin.addScaledVector(fw, 0.28)
+
+    const target = new THREE.Vector3((p.itGrappleTarget as any).x, (p.itGrappleTarget as any).y, (p.itGrappleTarget as any).z)
+    const dir = new THREE.Vector3().subVectors(target, origin)
+    const len = Math.max(0.001, dir.length())
+
+    // hide tiny ropes
+    if (len < 0.2) { meshRef.current.visible = false; return }
+
+    // position at midpoint
+    const mid = new THREE.Vector3().addVectors(origin, target).multiplyScalar(0.5)
+    meshRef.current.position.copy(mid)
+
+    // orient cylinder so its Y axis aligns with dir
+    const up = new THREE.Vector3(0, 1, 0)
+    const q = new THREE.Quaternion().setFromUnitVectors(up, dir.clone().normalize())
+    meshRef.current.quaternion.copy(q)
+
+    // scale: Y controls length, X/Z control thickness
+    const ropeRadius = 0.06 // thicker rope
+    meshRef.current.scale.set(ropeRadius, len * 0.5, ropeRadius)
+
+    // animate emissive pulse
+    if (matRef.current) {
+      const t = performance.now() * 0.001
+      const pulse = 0.7 + Math.sin(t * 6.0) * 0.15
+      matRef.current.emissiveIntensity = 0.5 * pulse
+      // subtle color shift
+      matRef.current.color.set('#34d399')
+    }
   })
-  return <primitive object={lineRef.current!} />
+
+  return (
+    <mesh ref={meshRef} geometry={geomRef.current} material={matRef.current} visible={false} castShadow receiveShadow />
+  )
 }
 
 // Preview of grapple target when ready (client-side prediction)
 function GrapplePreview({ me, mapName }: { me: NetPlayer | null; mapName?: string }) {
   const { camera } = useThree()
   const sphereRef = useRef<THREE.Mesh>(null)
-  // Initialize geometry/material/line eagerly to avoid ref assignment TS complaints
-  const geomRef = useRef<THREE.BufferGeometry>(new THREE.BufferGeometry())
-  const matRef = useRef<THREE.LineDashedMaterial>(new THREE.LineDashedMaterial({ color:'#34d399', dashSize:0.6, gapSize:0.4 }))
-  const lineRef = useRef<THREE.Line>(new THREE.Line(geomRef.current, matRef.current))
-  if (!geomRef.current.getAttribute('position')) {
-    geomRef.current.setAttribute('position', new THREE.BufferAttribute(new Float32Array(2*3),3))
-  }
   const range = (constants.IT?.GRAPPLE_RANGE || 30)
+  // ray vs AABB (slab method)
+  function rayAABB(orig: THREE.Vector3, dir: THREE.Vector3, aabb: any) {
+    let tmin = -Infinity
+    let tmax = Infinity
+    for (let i = 0; i < 3; i++) {
+      const o = orig.getComponent(i)
+      const di = dir.getComponent(i)
+      const min = aabb.min[i]
+      const max = aabb.max[i]
+      if (Math.abs(di) < 1e-6) {
+        if (o < min || o > max) return null
+        continue
+      }
+      let t1 = (min - o) / di
+      let t2 = (max - o) / di
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp }
+      if (t1 > tmin) tmin = t1
+      if (t2 < tmax) tmax = t2
+      if (tmin > tmax) return null
+    }
+    if (tmax < 0) return null
+    const t = tmin >= 0 ? tmin : tmax
+    return t
+  }
   useFrame(() => {
-    if (!me || !sphereRef.current || !lineRef.current || !geomRef.current) return
+    if (!me || !sphereRef.current) return
     const gCd = (me as any).itGrappleCd || 0
     const abilityReady = me.itAbility === 'grapple' && gCd <= 0 && !(me as any).itGrappleActive
-    if (!abilityReady) { sphereRef.current.visible = false; lineRef.current.visible = false; return }
-    // Predict target similar to server (pitch+yaw)
-    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize()
+    if (!abilityReady) { sphereRef.current.visible = false; return }
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize()
     const origin = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
-    // Scan map AABBs for candidate tops
-    let best = null; let bestDist = range + 1
+    let bestT = Infinity
+    let bestPoint: THREE.Vector3 | null = null
     try {
       const mapData = pickMapData(mapName || '')
       if (mapData && Array.isArray(mapData.aabbs)) {
         for (const b of mapData.aabbs) {
-          const cx = (b.min[0] + b.max[0]) * 0.5
-          const cz = (b.min[2] + b.max[2]) * 0.5
-          const topY = b.max[1] + 0.2
-          const target = new THREE.Vector3(cx, topY, cz)
-          const to = target.clone().sub(origin)
-          const dist = to.length()
-          if (dist > range) continue
-          // vertical allowance
-          if (topY < me.pos[1] + (constants.IT?.GRAPPLE_MIN_HEIGHT || 0.4) && dir.y < 0.15) continue
-          const dot = to.normalize().dot(dir)
-          if (dot < 0.55) continue
-          if (dist < bestDist) { bestDist = dist; best = target }
+          const t = rayAABB(origin, dir, b)
+          if (t !== null && t >= 0 && t <= range && t < bestT) {
+            bestT = t
+            bestPoint = origin.clone().add(dir.clone().multiplyScalar(t))
+          }
         }
       }
     } catch {}
-    const mat = sphereRef.current.material as THREE.Material & { color?: THREE.Color }
-    if (!best) {
-      best = origin.clone().add(dir.multiplyScalar(Math.min(range*0.5, 12)))
-      if (mat && (mat as any).color) (mat as any).color.set('#475569')
-    } else {
-      if (mat && (mat as any).color) (mat as any).color.set('#10b981')
-    }
+    if (!bestPoint) { sphereRef.current.visible = false; return }
+    const mat = sphereRef.current.material as THREE.MeshStandardMaterial
+    mat.color.set('#10b981')
+    mat.emissive.set('#064e3b')
+    mat.emissiveIntensity = 0.9
     sphereRef.current.visible = true
-    sphereRef.current.position.copy(best)
-    lineRef.current.visible = true
-    const posAttr = geomRef.current.getAttribute('position')
-    const start = new THREE.Vector3(me.pos[0], me.pos[1] + (constants.PLAYER?.EYE_HEIGHT ?? 1.62) - 0.25, me.pos[2])
-    posAttr.setXYZ(0, start.x, start.y, start.z)
-    posAttr.setXYZ(1, best.x, best.y, best.z)
-    posAttr.needsUpdate = true
-    ;(lineRef.current.material as any).needsUpdate = true
+    sphereRef.current.scale.set(0.22, 0.22, 0.22)
+    sphereRef.current.position.copy(bestPoint)
   })
   return (
     <group>
       <mesh ref={sphereRef} visible={false}>
-        <sphereGeometry args={[0.28,16,12]} />
+        <sphereGeometry args={[0.28, 16, 12]} />
         <meshStandardMaterial color={'#10b981'} emissive={'#064e3b'} emissiveIntensity={0.6} />
       </mesh>
-      {lineRef.current && <primitive object={lineRef.current} />}
+      {/* preview shows only the endpoint */}
     </group>
   )
 }
@@ -1014,23 +1041,20 @@ function GrapplePreview({ me, mapName }: { me: NetPlayer | null; mapName?: strin
 // Dash visual effects (simple burst at start + trailing pulse while active)
 function DashEffects({ snap }: { snap: Snapshot | null }) {
   const groupRef = useRef<THREE.Group>(null)
-  const dashState = useRef(new Map()) // id -> justStarted boolean
   useFrame(() => {
     if (!groupRef.current || !snap) return
-    // Clear previous children each frame (lightweight for few players)
     while (groupRef.current.children.length) groupRef.current.remove(groupRef.current.children[0])
     for (const p of snap.players) {
       const dashT = (p as any).itDashT || 0
       if (snap.itId !== p.id || p.itAbility !== 'dash' || dashT <= 0) continue
       const just = (dashT > (constants.IT?.DASH_TIME || 0.8) - 0.05)
       if (just) {
-        const burst = new THREE.Mesh(new THREE.RingGeometry(0.2,0.9,24,1), new THREE.MeshStandardMaterial({ color:'#3b82f6', emissive:'#1d4ed8', emissiveIntensity:1.2, transparent:true, opacity:0.8 }))
-        burst.rotation.x = -Math.PI/2
-        burst.position.set(p.pos[0], p.pos[1]+0.05, p.pos[2])
+        const burst = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.9, 24, 1), new THREE.MeshStandardMaterial({ color: '#3b82f6', emissive: '#1d4ed8', emissiveIntensity: 1.2, transparent: true, opacity: 0.8 }))
+        burst.rotation.x = -Math.PI / 2
+        burst.position.set(p.pos[0], p.pos[1] + 0.05, p.pos[2])
         groupRef.current.add(burst)
       }
-      // Trail pulse (small quads that fade)
-      const trail = new THREE.Mesh(new THREE.PlaneGeometry(0.7,0.7), new THREE.MeshBasicMaterial({ color:'#60a5fa', transparent:true, opacity:0.35 }))
+      const trail = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), new THREE.MeshBasicMaterial({ color: '#60a5fa', transparent: true, opacity: 0.35 }))
       trail.position.set(p.pos[0], p.pos[1] + 0.9, p.pos[2])
       trail.rotation.y = p.yaw + Math.PI
       groupRef.current.add(trail)
