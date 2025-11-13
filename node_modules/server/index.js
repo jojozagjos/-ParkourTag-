@@ -622,8 +622,10 @@ function physicsStep(room, dt) {
           // Small forward impulse
           const fwImp = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
           // Stronger immediate impulse for dash to make it feel more powerful
-          p.vel[0] += fwImp[0] * (P.MAX_SPEED * 1.2)
-          p.vel[2] += fwImp[2] * (P.MAX_SPEED * 1.2)
+          // Use configured dash speed multiplier so the instantaneous impulse matches the sustained dash boost
+          const dashImpulse = P.MAX_SPEED * (IT.DASH_SPEED_MULT || 1.9)
+          p.vel[0] += fwImp[0] * dashImpulse
+          p.vel[2] += fwImp[2] * dashImpulse
           io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
         } else if (p.itAbility === 'grapple' && p.itGrappleCd <= 0) {
           // Shoot a ray from the player's view (using yaw/pitch) and set grapple target to the first hit point

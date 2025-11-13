@@ -1033,7 +1033,10 @@ function GrappleRope({ p, isSelf, localTarget, localActive }: { p: NetPlayer; is
       transparent: true,
       opacity: 0.98,
       side: THREE.DoubleSide,
-      depthWrite: true
+      // Do not write to depth so the rope won't be occluded by depth-buffer ordering
+      depthWrite: false,
+      // Keep depth test so rope still respects occlusion when appropriate
+      depthTest: true
     })
   }
 
@@ -1105,10 +1108,24 @@ function GrappleRope({ p, isSelf, localTarget, localActive }: { p: NetPlayer; is
       // subtle color shift
       matRef.current.color.set('#34d399')
     }
+    // Force render properties once per-frame to avoid r3f/three optimizations hiding the rope
+    try {
+      meshRef.current.frustumCulled = false
+      meshRef.current.renderOrder = 9999
+      // avoid shadow interactions which can cause visual artifacts in first-person
+      meshRef.current.castShadow = false
+      meshRef.current.receiveShadow = false
+      if (matRef.current) {
+        matRef.current.depthWrite = false
+        matRef.current.depthTest = true
+        // ensure material transparent flag is on so opacity and emissive work predictably
+        matRef.current.transparent = true
+      }
+    } catch (e) {}
   })
 
   return (
-    <mesh ref={meshRef} geometry={geomRef.current} material={matRef.current} visible={false} castShadow receiveShadow />
+    <mesh ref={meshRef} geometry={geomRef.current} material={matRef.current} visible={false} />
   )
 }
 
