@@ -115,6 +115,7 @@ function makePlayer(id, name) {
     // slide
     slideT: 0,
   slideCd: 0,
+    chainT: 0,
     crouchSince: 0,
     // jump buffer & tic-tac
     jumpBufferedT: 0,
@@ -468,6 +469,7 @@ function doWallrun(p, inp, dt, mapData) {
     p.mode = 'air'
     p._wallrunCooldown = P.WALLRUN_COOLDOWN * 0.5
     p._wallRunActive = false
+    p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.4))
     return 'jump'
   }
 
@@ -500,6 +502,7 @@ function physicsStep(room, dt) {
   const mapData = room.mapData
   for (const p of Object.values(room.players)) {
     const inp = p.input
+    const wasOnGroundBefore = !!p.onGround
     p.yaw = typeof inp.yaw === 'number' ? inp.yaw : p.yaw
     p.pitch = clamp(typeof inp.pitch === 'number' ? inp.pitch : p.pitch, -Math.PI/2*0.95, Math.PI/2*0.95)
 
@@ -518,6 +521,7 @@ function physicsStep(room, dt) {
         p.pos[1] = p.mantleToY
         p.vel[1] = Math.max(p.vel[1], 2.0)
         p.mode = 'air'
+        p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.3))
       }
       // Skip rest of physics this tick for mantle
       // Still emit snapshot later in loop
@@ -540,6 +544,7 @@ function physicsStep(room, dt) {
     const accelBase = p.onGround ? P.MOVE_ACCEL : P.AIR_ACCEL
     const accel = accelBase * (isSprinting ? 1.5 : 1.0)
     const maxSpeed = isSprinting ? P.MAX_SPEED * P.SPRINT_MULT : P.MAX_SPEED
+    if ((p.chainT || 0) > 0) maxSpeed *= (P.CHAIN_SPEED_MULT || 1.0)
 
     p.vel[0] += wishX * accel * dt
     p.vel[2] += wishZ * accel * dt
@@ -701,6 +706,7 @@ function physicsStep(room, dt) {
   p.jumpBufferedT = Math.max(0, p.jumpBufferedT - dt)
   p.tictacCd = Math.max(0, (p.tictacCd || 0) - dt)
   p.slideCd = Math.max(0, (p.slideCd || 0) - dt)
+    p.chainT = Math.max(0, (p.chainT || 0) - dt)
 
     // Allow mantling while falling: if holding jump and moving downward near a ledge, attempt a catch
     // This makes catching an edge while dropping easier than the short jump-edge coyote window
