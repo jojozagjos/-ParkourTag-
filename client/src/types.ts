@@ -25,6 +25,8 @@ export type NetPlayer = {
   pitch: number
   onGround: boolean
   mode: 'ground' | 'air' | 'slide' | 'crouch' | 'wallrunL' | 'wallrunR' | 'mantle'
+  // Remaining time (seconds) for the temporary chaining speed boost
+  chainT?: number
 }
 
 export type Scores = Record<string, number>

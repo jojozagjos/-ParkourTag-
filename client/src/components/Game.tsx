@@ -53,7 +53,7 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
       }
     }
 
-    const onSfx = (e: { kind?: string; id?: string; target?: string }) => {
+  const onSfx = (e: { kind?: string; id?: string; target?: string }) => {
       const kind = String(e?.kind ?? '').toLowerCase()
       const map: Record<string, string> = {
         jump: 'jump',
@@ -71,8 +71,8 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
   const sampled = bufferRef.current.sample()
   const actor = sampled?.players.find((p: NetPlayer) => p.id === (e.id || e.target))
       if (actor) {
-        // naive occlusion: check if any AABB is strictly between camera and source; if so set occluded
-        let occluded = false
+        // naive occlusion: sample points along segment and count intersections to compute occlusion strength
+        let occStrength = 0
         try {
           const mapData = pickMapData(snap?.mapName || mapName)
           if (mapData && Array.isArray(mapData.aabbs)) {
@@ -84,20 +84,30 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
               const len = dir.length() || 1
               dir.normalize()
               // sample a few points along the segment and see if they are inside any obstacle horizontally at sampled height
-              const steps = 10
+              const steps = 14
               const R = (constants.PLAYER?.RADIUS ?? 0.35)
-              outer: for (let i = 1; i < steps; i++) {
+              let hits = 0
+              for (let i = 1; i < steps; i++) {
                 const t = i / steps
                 const Pnt = new THREE.Vector3().copy(A).addScaledVector(dir, len * t)
                 for (const b of mapData.aabbs) {
                   // expand by radius to be conservative
-                  if (Pnt.x >= b.min[0]-R && Pnt.x <= b.max[0]+R && Pnt.z >= b.min[2]-R && Pnt.z <= b.max[2]+R && Pnt.y >= b.min[1] && Pnt.y <= b.max[1]) { occluded = true; break outer }
+                  if (Pnt.x >= b.min[0]-R && Pnt.x <= b.max[0]+R && Pnt.z >= b.min[2]-R && Pnt.z <= b.max[2]+R && Pnt.y >= b.min[1] && Pnt.y <= b.max[1]) { hits++; break }
                 }
               }
+              occStrength = Math.max(0, Math.min(1, hits / (steps * 0.5)))
             }
           }
         } catch {}
-        playSfx3D(key as any, { position: [actor.pos[0], actor.pos[1]+1.2, actor.pos[2]], volume: 0.8, occluded })
+        const cam = (document as any).__r3f?.root?.getState?.().camera
+        const lisPos: [number,number,number] | undefined = cam ? [cam.position.x, cam.position.y, cam.position.z] : undefined
+        playSfx3D(key as any, {
+          position: [actor.pos[0], actor.pos[1]+1.2, actor.pos[2]],
+          volume: 0.8,
+          occlusion: occStrength,
+          sourceVel: [actor.vel[0], actor.vel[1], actor.vel[2]],
+          listenerPos: lisPos,
+        })
       } else {
         try { playSfx(key as any) } catch {}
       }
@@ -239,6 +249,26 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
         <MapVote socket={socket} maps={maps} current={snap.mapName} voteCounts={voteCounts} />
       )}
       {paused && <PauseMenu socket={socket} onClose={() => { setPausedGlobal(false); setPaused(false) }} />}
+      {/* Bottom-center chain bar */}
+      {(() => {
+        const ct = (me as any)?.chainT as number | undefined
+        const active = typeof ct === 'number' && ct > 0
+        if (!active) return null
+        const total = (constants as any).CHAIN_TIME || 1
+        const mult = (constants as any).CHAIN_SPEED_MULT || 1.2
+        const pct = Math.max(0, Math.min(1, ct / total))
+        return (
+          <div style={{ position:'fixed', left:'50%', transform:'translateX(-50%)', bottom: 24, zIndex: 1000, width: 'min(60vw, 560px)' }}>
+            <div style={{ display:'flex', justifyContent:'center', gap:8, fontWeight:700, letterSpacing:0.5, marginBottom: 6 }}>
+              <span style={{ opacity:0.9 }}>Chain</span>
+              <span style={{ color:'#7dd3fc' }}>{`x${Number(mult).toFixed(2)}`}</span>
+            </div>
+            <div style={{ height: 12, background:'#0b1326', borderRadius: 999, overflow:'hidden', boxShadow: '0 0 0 1px #1f2d53 inset, 0 8px 30px rgba(75,119,255,0.25)' }}>
+              <div style={{ width: `${pct * 100}%`, height: '100%', background: 'linear-gradient(90deg,#6ee7ff,#3b82f6)', transition: 'width 80ms linear' }} />
+            </div>
+          </div>
+        )
+      })()}
     </>
   )
 }
@@ -359,10 +389,37 @@ const Avatar = memo(function Avatar({ p, isSelf, isIt }: { p: NetPlayer; isSelf:
     return null
   }, [p.hat])
 
+  // Third-person simple animations: lean/tilt on wallrun and slide
+  const animRef = useRef<THREE.Group>(null)
+  const tilt = useRef({ roll: 0, pitch: 0, y: 0 })
+  useFrame((_, dt) => {
+    if (!animRef.current || isSelf) return
+    const speed = Math.hypot(p.vel[0], p.vel[2])
+    let targetRoll = 0
+    let targetPitch = 0
+    let targetY = 0
+    if (p.mode === 'wallrunL') targetRoll = 0.28
+    else if (p.mode === 'wallrunR') targetRoll = -0.28
+    if (p.mode === 'slide') {
+      targetPitch = -0.22
+      // small lateral roll proportional to lateral component along right vector
+      const rt = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)]
+      const lateral = p.vel[0]*rt[0] + p.vel[2]*rt[2]
+      targetRoll += Math.max(-0.08, Math.min(0.08, -lateral * 0.01))
+      targetY = -0.18
+    }
+    const k = Math.min(1, dt * 10)
+    tilt.current.roll += (targetRoll - tilt.current.roll) * k
+    tilt.current.pitch += (targetPitch - tilt.current.pitch) * k
+    tilt.current.y += (targetY - tilt.current.y) * k
+    animRef.current.rotation.set(tilt.current.pitch, 0, tilt.current.roll)
+    animRef.current.position.y = tilt.current.y
+  })
+
   return (
     <group position={p.pos as any} rotation={[0, p.yaw, 0]}>
       {!isSelf && (
-        <>
+        <group ref={animRef}>
           <mesh position={[0, boxCenterY, 0]} castShadow receiveShadow>
             {bodyGeom}
             {bodyMat}
@@ -373,7 +430,7 @@ const Avatar = memo(function Avatar({ p, isSelf, isIt }: { p: NetPlayer; isSelf:
           </mesh>
           {hatMesh}
           <NameTag name={p.name} y={EYE + 0.35} />
-        </>
+        </group>
       )}
     </group>
   )
@@ -506,39 +563,37 @@ function FPCamera({ me, inputRef, mapName }: { me: NetPlayer | null; inputRef: R
       const mapData = pickMapData(mapName)
       if (mapData && Array.isArray(mapData.aabbs)) {
         const R = constants.PLAYER?.RADIUS ?? 0.35
-        let nearestCeiling = Infinity
+        // Track a smoothed ceiling and sticky clamp to avoid jitter under low platforms
+        const sticky = (FPCamera as any)._ceilSticky || ((FPCamera as any)._ceilSticky = { y: Infinity, active: false })
+        let nearest = Infinity
         for (const b of mapData.aabbs) {
-          // Horizontal overlap (expanded by radius)
           const horiz = (me.pos[0] >= b.min[0] - R && me.pos[0] <= b.max[0] + R && me.pos[2] >= b.min[2] - R && me.pos[2] <= b.max[2] + R)
           if (!horiz) continue
-          // Block underside above player base; treat as ceiling candidate if underside above player's feet
-          if (b.min[1] > me.pos[1] + 0.2 && b.min[1] < nearestCeiling) {
-            nearestCeiling = b.min[1]
-          }
+          if (b.min[1] > me.pos[1] + 0.2 && b.min[1] < nearest) nearest = b.min[1]
         }
-        if (nearestCeiling !== Infinity) {
+        // Low-pass the ceiling height to avoid frame-to-frame toggles
+        if (nearest !== Infinity) {
+          if (!Number.isFinite(sticky.y) || sticky.y === Infinity) sticky.y = nearest
+          const lerp = Math.min(1, dt * 20)
+          sticky.y = sticky.y + (nearest - sticky.y) * lerp
+        } else {
+          // When no ceiling, ease toward Infinity by releasing sticky
+          sticky.y = Infinity
+        }
+        if (sticky.y !== Infinity) {
           const baseMargin = 0.14
           const targetPitch = inputRef.current?.pitch ?? me.pitch
           const lookUpFactor = Math.max(0, targetPitch)
           const extra = Math.min(0.18, lookUpFactor * 0.25)
           const margin = baseMargin + extra
-          const clampY = nearestCeiling - margin
-          // Desired clamp offset relative to natural (unclamped) eye target
-          const desiredClampOffset = Math.min(0, clampY - eyeYTarget)
-          // Smooth only upward release to avoid jitter; snap quickly downward
-          if (desiredClampOffset < clampOffsetRef.value) {
-            clampOffsetRef.value = desiredClampOffset // snap tighter
-          } else {
-            // ease offset toward 0 (release) to prevent oscillation
-            const releaseRate = Math.min(1, dt * 6)
-            clampOffsetRef.value += (desiredClampOffset - clampOffsetRef.value) * releaseRate
-          }
-          eyeYTarget += clampOffsetRef.value
-        } else {
-          // ease clamp offset back to 0 when open space
-          const releaseRate = Math.min(1, dt * 4)
-          clampOffsetRef.value += (0 - clampOffsetRef.value) * releaseRate
-          eyeYTarget += clampOffsetRef.value
+          const clampY = sticky.y - margin
+          // Activate sticky clamp if head would cross the ceiling minus margin,
+          // keep active until there's comfortable clearance (hysteresis)
+          const hysteresis = 0.06
+          const wouldClip = eyeYTarget > clampY
+          if (wouldClip) sticky.active = true
+          if (sticky.active && (eyeYTarget < clampY - hysteresis)) sticky.active = false
+          if (sticky.active) eyeYTarget = Math.min(eyeYTarget, clampY)
         }
       }
     } catch {}

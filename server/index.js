@@ -214,6 +214,13 @@ function hasHeadClearance(player, mapData) {
   return true
 }
 
+// Returns true if there is enough vertical space to fully stand plus a small margin
+function canStandUp(player, mapData, margin = 0.08) {
+  const clearance = overheadClearance(player, mapData)
+  if (clearance === Infinity) return true
+  return clearance >= (P.HEIGHT + margin)
+}
+
 // Returns vertical clearance (distance from player's feet Y to nearest underside above) or Infinity if open.
 function overheadClearance(player, mapData) {
   const R = P.RADIUS
@@ -616,7 +623,7 @@ function physicsStep(room, dt) {
     // Consume buffered jump if allowed (ground or coyote)
     if ((p.onGround || (p.airSince || 0) <= P.COYOTE_TIME) && p.jumpBufferedT > 0 && !mantleSfx) {
       // Block jumping if there isn't enough headroom to stand
-      if (!hasHeadClearance(p, mapData)) {
+      if (!canStandUp(p, mapData, 0.08)) {
         // Keep buffer briefly so the player can jump right after clearing headroom
         // but avoid infinite buffering; we already decay jumpBufferedT below
       } else {
@@ -637,6 +644,8 @@ function physicsStep(room, dt) {
         if (clearance === Infinity || clearance >= (P.MIN_SLIDE_CLEARANCE || slideHeight + 0.05)) {
           p.mode = 'slide'
           p.slideT = P.SLIDE_DURATION
+          // Starting a slide counts toward chaining
+          p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.5))
           io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
         } else {
           // Not enough clearance: enter crouch instead
@@ -645,6 +654,24 @@ function physicsStep(room, dt) {
       }
     }
     if (p.mode === 'slide') {
+      // Slide hop: jump press while sliding gives a small pop and extends chain
+      if (jumpPressEdge && p.onGround) {
+        const fwHop = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
+        const hopF = (P.SLIDE_HOP_FORCE || 2.0)
+        // Preserve forward speed and add a touch of forward impulse
+        const planar = [p.vel[0], 0, p.vel[2]]
+        const along = (planar[0]*fwHop[0] + planar[2]*fwHop[2])
+        const addForward = Math.max(0.6, Math.min(1.0, along / Math.max(1, P.MAX_SPEED))) * (hopF * 0.35)
+        p.vel[0] = planar[0] + fwHop[0] * addForward
+        p.vel[2] = planar[2] + fwHop[2] * addForward
+        p.vel[1] = Math.max(p.vel[1], hopF)
+        p.onGround = false
+        p.mode = 'air'
+        p.slideT = 0
+        p.slideCd = Math.max(p.slideCd || 0, (P.SLIDE_COOLDOWN || 0.7))
+        p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.5))
+        io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
+      }
       p.slideT -= dt
       // Lower friction while sliding to keep speed; slide friction only applies when grounded
       const fr = Math.max(0, (P.SLIDE_FRICTION || 3.0) * dt)
@@ -653,7 +680,11 @@ function physicsStep(room, dt) {
       // Abort slide if clearance becomes too small (e.g. moving under a very low overhang)
       const slideHeight = Math.max(1.0, P.HEIGHT - 0.6)
       const clearance = overheadClearance(p, mapData)
-      if (clearance !== Infinity && clearance < (P.MIN_SLIDE_CLEARANCE || slideHeight + 0.05)) {
+      const crouchNeed = (P.CROUCH_HEIGHT || (P.HEIGHT - 0.25)) + 0.05
+      // If space is even lower than crouch height, force staying in slide and keep a small remaining timer to avoid popping
+      if (clearance !== Infinity && clearance < crouchNeed) {
+        p.slideT = Math.max(p.slideT, 0.12)
+      } else if (clearance !== Infinity && clearance < (P.MIN_SLIDE_CLEARANCE || slideHeight + 0.05)) {
         p.mode = 'crouch'
         p.slideT = 0
         p.slideCd = Math.max(p.slideCd || 0, (P.SLIDE_COOLDOWN || 0.7))
@@ -661,7 +692,7 @@ function physicsStep(room, dt) {
       // Try to exit slide if conditions say so, but only if there is headroom to stand
       const wantExit = (!p.onGround || !inp.crouch || p.slideT <= 0)
       if (wantExit) {
-        if (hasHeadClearance(p, mapData)) {
+        if (canStandUp(p, mapData, 0.08)) {
           p.mode = p.onGround ? 'ground' : 'air'
           p.slideCd = Math.max(p.slideCd || 0, (P.SLIDE_COOLDOWN || 0.7))
         } else {
@@ -673,7 +704,7 @@ function physicsStep(room, dt) {
       }
     }
     // Handle crouch persistence & speed penalty
-    if (p.mode === 'crouch') {
+  if (p.mode === 'crouch') {
       // Apply movement speed reduction
       const crouchMult = P.CROUCH_SPEED_MULT || 0.55
       const planarSpd = Math.hypot(p.vel[0], p.vel[2])
@@ -682,7 +713,7 @@ function physicsStep(room, dt) {
         const s = maxCrouch / planarSpd; p.vel[0] *= s; p.vel[2] *= s
       }
       // Exit crouch automatically when head clearance returns
-      if (hasHeadClearance(p, mapData) && !inp.crouch) {
+      if (canStandUp(p, mapData, 0.1) && !inp.crouch) {
         p.mode = p.onGround ? 'ground' : 'air'
         p.crouchSince = 0
       }
@@ -785,6 +816,7 @@ function snapshot(room) {
       id: p.id, name: p.name,
       pos: p.pos, vel: p.vel, yaw: p.yaw, pitch: p.pitch,
       onGround: !!p.onGround, mode: p.mode,
+      chainT: p.chainT,
       color: p.color,
       face: p.face,
       hat: p.hat,

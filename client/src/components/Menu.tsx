@@ -98,10 +98,10 @@ export default function Menu({ socket }: { socket: Socket }) {
                 <label htmlFor="displayName">Display Name</label>
                 <input id="displayName" value={name} onChange={e => saveName(e.target.value)} placeholder="Your name" maxLength={24} />
               </div>
-              <div className="actions" style={{ marginTop: 6 }}>
-                <button onClick={join} className="secondary" title="Join existing lobby">Join</button>
-                <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Room code" maxLength={5} />
+              <div className="actions" style={{ marginTop: 6, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                 <button onClick={host} title="Create a new lobby">Host</button>
+                <button onClick={join} className="secondary" title="Join existing lobby" disabled={!joinCode || joinCode.trim().length < 3}>Join</button>
+                <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Room code" maxLength={5} style={{ width: 110, textTransform:'uppercase' }} />
               </div>
               <div className="helper">Host to generate a 5‑char code and share with friends.<br />Movement: WASD + Space + Shift + C (slide). Esc: pause/settings.</div>
             </div>

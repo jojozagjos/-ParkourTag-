@@ -27,7 +27,12 @@ async function getBuffer(key: keyof typeof SFX_URLS): Promise<AudioBuffer | null
 export type Play3DOpts = {
   position: [number, number, number]
   volume?: number
-  occluded?: boolean
+  // 0..1 occlusion strength; boolean true treated as 1
+  occlusion?: number | boolean
+  // Optional source/listener velocity and listener position for doppler
+  sourceVel?: [number, number, number]
+  listenerPos?: [number, number, number]
+  listenerVel?: [number, number, number]
 }
 
 export async function playSfx3D(name: keyof typeof SFX_URLS, opts: Play3DOpts) {
@@ -46,19 +51,41 @@ export async function playSfx3D(name: keyof typeof SFX_URLS, opts: Play3DOpts) {
   src.setDistanceModel('linear')
   src.setVolume(vol)
 
-  // Simple occlusion: low-pass + volume drop
-  if (opts.occluded) {
+  // Simple occlusion: low-pass + volume drop scaled by occlusion strength
+  let occ = 0
+  if (typeof opts.occlusion === 'boolean') occ = opts.occlusion ? 1 : 0
+  else if (typeof opts.occlusion === 'number') occ = Math.max(0, Math.min(1, opts.occlusion))
+  if (occ > 0) {
     const biquad = ctx.createBiquadFilter()
     biquad.type = 'lowpass'
-    biquad.frequency.value = 900 // muffle brightness
+    // 0→ no occlusion ~6kHz, 1→ heavy occlusion ~900Hz
+    const freq = 6000 * (1 - occ) + 900
+    biquad.frequency.value = freq
     biquad.Q.value = 0.7
     // @ts-ignore private API in three typings
-    if (src.setFilter) src.setFilter(biquad)
-    else {
-      try { (src as any).filters = [biquad] } catch {}
-    }
-    src.setVolume(vol * 0.55)
+    if ((src as any).setFilter) (src as any).setFilter(biquad)
+    else { try { (src as any).filters = [biquad] } catch {} }
+    src.setVolume(vol * (1 - 0.45 * occ))
   }
+
+  // Doppler approximation: adjust playbackRate by relative LOS velocity
+  // If velocities provided, compute radial component along (src - listener)
+  try {
+    const lis = opts.listenerPos ?? (listener.parent ? [listener.parent.position.x, listener.parent.position.y, listener.parent.position.z] as [number,number,number] : undefined)
+    const lvel = opts.listenerVel ?? [0,0,0]
+    if (lis && opts.sourceVel) {
+      const dx = opts.position[0] - lis[0]
+      const dy = opts.position[1] - lis[1]
+      const dz = opts.position[2] - lis[2]
+      const L = Math.hypot(dx, dy, dz) || 1
+      const nx = dx / L, ny = dy / L, nz = dz / L
+      const rel = [(opts.sourceVel[0] - lvel[0]), (opts.sourceVel[1] - lvel[1]), (opts.sourceVel[2] - lvel[2])]
+      const vlos = rel[0]*nx + rel[1]*ny + rel[2]*nz // toward listener positive
+      // Map to small playback rate shift; clamp gentle range
+      const rate = Math.max(0.85, Math.min(1.15, 1 + (vlos / 50) * 0.35))
+      ;(src as any).setPlaybackRate?.(rate)
+    }
+  } catch {}
 
   // Temp object to host the audio in the scene graph
   const obj = new THREE.Object3D()
