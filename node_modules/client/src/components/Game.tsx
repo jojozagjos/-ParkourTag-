@@ -319,6 +319,8 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           {/* Dash FX */}
           <DashEffects snap={snap} />
           <FPCamera me={me} inputRef={inputRef} mapName={snap?.mapName || mapName} />
+          {/* Debug overlays to visualize authoritative grapple targets (visible spheres + lines) */}
+          <GrappleDebug snap={snap} />
         </Suspense>
       </Canvas>
 
@@ -1277,4 +1279,36 @@ function DashEffects({ snap }: { snap: Snapshot | null }) {
   })
 
   return <group ref={groupRef} />
+}
+
+// Debug helper: render authoritative grapple targets from snapshots so we can see
+// whether the server actually registers a hit at range.
+function GrappleDebug({ snap }: { snap: Snapshot | null }) {
+  if (!snap) return null
+  return (
+    <group>
+      {snap.players.map(p => {
+        const tgt: any = (p as any).itGrappleTarget
+        if (!tgt) return null
+        const x = Array.isArray(tgt) ? tgt[0] : (tgt.x ?? 0)
+        const y = Array.isArray(tgt) ? tgt[1] : (tgt.y ?? 0)
+        const z = Array.isArray(tgt) ? tgt[2] : (tgt.z ?? 0)
+        // small always-on-top sphere
+        return (
+          <group key={p.id+':grapDbg'}>
+            <mesh position={[x, y, z] as any}>
+              <sphereGeometry args={[0.12, 8, 6]} />
+              <meshBasicMaterial color={'#ff00ff'} depthTest={false} depthWrite={false} toneMapped={false} />
+            </mesh>
+            {/* line from player's eye origin to target */}
+            <mesh position={[(p.pos as any)[0], ((p.pos as any)[1] + (constants.PLAYER?.EYE_HEIGHT ?? 1.62) - 0.25), (p.pos as any)[2]] as any}>
+              {/* thin cylinder oriented later by a helper; approximate by scaled box for simplicity */}
+              <boxGeometry args={[0.06, Math.max(0.001, Math.hypot(x - (p.pos as any)[0], y - ((p.pos as any)[1] + (constants.PLAYER?.EYE_HEIGHT ?? 1.62) - 0.25), z - (p.pos as any)[2])), 0.06]} />
+              <meshBasicMaterial color={'#ff00ff'} depthTest={false} depthWrite={false} toneMapped={false} />
+            </mesh>
+          </group>
+        )
+      })}
+    </group>
+  )
 }
