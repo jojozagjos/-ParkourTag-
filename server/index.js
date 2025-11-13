@@ -614,22 +614,28 @@ function physicsStep(room, dt) {
           p.vel[2] += fwImp[2] * (P.MAX_SPEED * 0.8)
           io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
         } else if (p.itAbility === 'grapple' && p.itGrappleCd <= 0) {
-          // Find forward target top within range
-          const fwDir = [-Math.sin(p.yaw), 0, -Math.cos(p.yaw)]
+          // Find forward target top within range using camera pitch+yaw so vertical aiming matters
+          const fwDir = [
+            -Math.sin(p.yaw) * Math.cos(p.pitch),
+            Math.sin(p.pitch),
+            -Math.cos(p.yaw) * Math.cos(p.pitch)
+          ]
           let best = null; let bestDist = (IT.GRAPPLE_RANGE || 30) + 1
           for (const b of mapData.aabbs) {
             const cx = (b.min[0] + b.max[0]) * 0.5
             const cz = (b.min[2] + b.max[2]) * 0.5
             const topY = b.max[1]
-            // Must be somewhat above/level
-            if (topY < p.pos[1] + (IT.GRAPPLE_MIN_HEIGHT || 0.4)) continue
             const dx = cx - p.pos[0]
+            const dy = (topY + 0.2) - (p.pos[1] + P.HEIGHT * 0.5) // approximate mid-body start
             const dz = cz - p.pos[2]
-            const dist = Math.hypot(dx, dz)
-            if (dist > (IT.GRAPPLE_RANGE || 30)) continue
-            const dot = (dx * fwDir[0] + dz * fwDir[2]) / (dist || 1)
+            const dist3 = Math.hypot(dx, dy, dz)
+            if (dist3 > (IT.GRAPPLE_RANGE || 30)) continue
+            // Require target to be at least a little above current feet unless aiming steeply upward
+            const minH = (IT.GRAPPLE_MIN_HEIGHT || 0.4)
+            if (topY < p.pos[1] + minH && fwDir[1] < 0.15) continue
+            const dot = (dx * fwDir[0] + dy * fwDir[1] + dz * fwDir[2]) / (dist3 || 1)
             if (dot < 0.55) continue
-            if (dist < bestDist) { bestDist = dist; best = [cx, topY + 0.2, cz] }
+            if (dist3 < bestDist) { bestDist = dist3; best = [cx, topY + 0.2, cz] }
           }
             if (best) {
               p.itGrappleTarget = best
@@ -661,6 +667,19 @@ function physicsStep(room, dt) {
           p.chainT = Math.max(p.chainT || 0, (P.CHAIN_TIME || 0.45))
           io.to(room.code).emit('sfx', { kind: 'jump', id: p.id })
         }
+        // Abort if progress stalls (distance not decreasing significantly) or timeout exceeded
+        p._grapplePrevDist = (typeof p._grapplePrevDist === 'number') ? p._grapplePrevDist : dist + 0.01
+        p._grappleElapsed = (p._grappleElapsed || 0) + dt
+        const improving = p._grapplePrevDist - dist
+        if (p._grappleElapsed > (IT.GRAPPLE_MAX_TIME || 2.5) || improving < 0.02) {
+          // allow a short grace if still fairly far but barely moving
+          if (p._grappleElapsed > (IT.GRAPPLE_MAX_TIME || 2.5) || dist > 3 && improving < 0.02) {
+            p.itGrappleActive = false
+            p.itGrappleTarget = null
+            io.to(room.code).emit('sfx', { kind: 'slide', id: p.id })
+          }
+        }
+        p._grapplePrevDist = dist
       }
     }
     let mantleSfx = null

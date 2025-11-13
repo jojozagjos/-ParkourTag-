@@ -240,6 +240,10 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           {snap?.players.map(p => (
             <GrappleRope key={p.id+':rope'} p={p} />
           ))}
+          {/* Grapple target preview for self when ready */}
+          <GrapplePreview me={me} mapName={snap?.mapName || mapName} />
+          {/* Dash FX */}
+          <DashEffects snap={snap} />
           <FPCamera me={me} inputRef={inputRef} mapName={snap?.mapName || mapName} />
         </Suspense>
       </Canvas>
@@ -919,10 +923,12 @@ function GrappleRope({ p }: { p: NetPlayer }) {
   }
   useFrame(() => {
     if (!lineRef.current || !geomRef.current || !matRef.current) return
-    const active = p.itGrappleActive && p.itGrappleTarget
+  const active = p.itGrappleActive && p.itGrappleTarget
     lineRef.current.visible = !!active
     if (!active) return
-    const start = new THREE.Vector3(p.pos[0], p.pos[1] + (constants.PLAYER?.HEIGHT ?? 1.8) * 0.55, p.pos[2])
+  // Rope origin: from face forward a bit and down toward hand position
+  const eyeH = (constants.PLAYER?.EYE_HEIGHT ?? 1.62)
+  const start = new THREE.Vector3(p.pos[0], p.pos[1] + eyeH - 0.25, p.pos[2])
     const end = new THREE.Vector3(p.itGrappleTarget!.x, p.itGrappleTarget!.y, p.itGrappleTarget!.z)
     const posAttr = geomRef.current.getAttribute('position') as THREE.BufferAttribute
     posAttr.setXYZ(0, start.x, start.y, start.z)
@@ -934,4 +940,101 @@ function GrappleRope({ p }: { p: NetPlayer }) {
     matRef.current.color.setRGB(0.18 * pul, 0.85 * pul, 0.55 * pul)
   })
   return <primitive object={lineRef.current!} />
+}
+
+// Preview of grapple target when ready (client-side prediction)
+function GrapplePreview({ me, mapName }: { me: NetPlayer | null; mapName?: string }) {
+  const { camera } = useThree()
+  const sphereRef = useRef<THREE.Mesh>(null)
+  // Initialize geometry/material/line eagerly to avoid ref assignment TS complaints
+  const geomRef = useRef<THREE.BufferGeometry>(new THREE.BufferGeometry())
+  const matRef = useRef<THREE.LineDashedMaterial>(new THREE.LineDashedMaterial({ color:'#34d399', dashSize:0.6, gapSize:0.4 }))
+  const lineRef = useRef<THREE.Line>(new THREE.Line(geomRef.current, matRef.current))
+  if (!geomRef.current.getAttribute('position')) {
+    geomRef.current.setAttribute('position', new THREE.BufferAttribute(new Float32Array(2*3),3))
+  }
+  const range = (constants.IT?.GRAPPLE_RANGE || 30)
+  useFrame(() => {
+    if (!me || !sphereRef.current || !lineRef.current || !geomRef.current) return
+    const gCd = (me as any).itGrappleCd || 0
+    const abilityReady = me.itAbility === 'grapple' && gCd <= 0 && !(me as any).itGrappleActive
+    if (!abilityReady) { sphereRef.current.visible = false; lineRef.current.visible = false; return }
+    // Predict target similar to server (pitch+yaw)
+    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize()
+    const origin = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
+    // Scan map AABBs for candidate tops
+    let best = null; let bestDist = range + 1
+    try {
+      const mapData = pickMapData(mapName || '')
+      if (mapData && Array.isArray(mapData.aabbs)) {
+        for (const b of mapData.aabbs) {
+          const cx = (b.min[0] + b.max[0]) * 0.5
+          const cz = (b.min[2] + b.max[2]) * 0.5
+          const topY = b.max[1] + 0.2
+          const target = new THREE.Vector3(cx, topY, cz)
+          const to = target.clone().sub(origin)
+          const dist = to.length()
+          if (dist > range) continue
+          // vertical allowance
+          if (topY < me.pos[1] + (constants.IT?.GRAPPLE_MIN_HEIGHT || 0.4) && dir.y < 0.15) continue
+          const dot = to.normalize().dot(dir)
+          if (dot < 0.55) continue
+          if (dist < bestDist) { bestDist = dist; best = target }
+        }
+      }
+    } catch {}
+    const mat = sphereRef.current.material as THREE.Material & { color?: THREE.Color }
+    if (!best) {
+      best = origin.clone().add(dir.multiplyScalar(Math.min(range*0.5, 12)))
+      if (mat && (mat as any).color) (mat as any).color.set('#475569')
+    } else {
+      if (mat && (mat as any).color) (mat as any).color.set('#10b981')
+    }
+    sphereRef.current.visible = true
+    sphereRef.current.position.copy(best)
+    lineRef.current.visible = true
+    const posAttr = geomRef.current.getAttribute('position')
+    const start = new THREE.Vector3(me.pos[0], me.pos[1] + (constants.PLAYER?.EYE_HEIGHT ?? 1.62) - 0.25, me.pos[2])
+    posAttr.setXYZ(0, start.x, start.y, start.z)
+    posAttr.setXYZ(1, best.x, best.y, best.z)
+    posAttr.needsUpdate = true
+    ;(lineRef.current.material as any).needsUpdate = true
+  })
+  return (
+    <group>
+      <mesh ref={sphereRef} visible={false}>
+        <sphereGeometry args={[0.28,16,12]} />
+        <meshStandardMaterial color={'#10b981'} emissive={'#064e3b'} emissiveIntensity={0.6} />
+      </mesh>
+      {lineRef.current && <primitive object={lineRef.current} />}
+    </group>
+  )
+}
+
+// Dash visual effects (simple burst at start + trailing pulse while active)
+function DashEffects({ snap }: { snap: Snapshot | null }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const dashState = useRef(new Map()) // id -> justStarted boolean
+  useFrame(() => {
+    if (!groupRef.current || !snap) return
+    // Clear previous children each frame (lightweight for few players)
+    while (groupRef.current.children.length) groupRef.current.remove(groupRef.current.children[0])
+    for (const p of snap.players) {
+      const dashT = (p as any).itDashT || 0
+      if (snap.itId !== p.id || p.itAbility !== 'dash' || dashT <= 0) continue
+      const just = (dashT > (constants.IT?.DASH_TIME || 0.8) - 0.05)
+      if (just) {
+        const burst = new THREE.Mesh(new THREE.RingGeometry(0.2,0.9,24,1), new THREE.MeshStandardMaterial({ color:'#3b82f6', emissive:'#1d4ed8', emissiveIntensity:1.2, transparent:true, opacity:0.8 }))
+        burst.rotation.x = -Math.PI/2
+        burst.position.set(p.pos[0], p.pos[1]+0.05, p.pos[2])
+        groupRef.current.add(burst)
+      }
+      // Trail pulse (small quads that fade)
+      const trail = new THREE.Mesh(new THREE.PlaneGeometry(0.7,0.7), new THREE.MeshBasicMaterial({ color:'#60a5fa', transparent:true, opacity:0.35 }))
+      trail.position.set(p.pos[0], p.pos[1] + 0.9, p.pos[2])
+      trail.rotation.y = p.yaw + Math.PI
+      groupRef.current.add(trail)
+    }
+  })
+  return <group ref={groupRef} />
 }
