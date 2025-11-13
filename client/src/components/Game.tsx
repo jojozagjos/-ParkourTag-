@@ -249,8 +249,8 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           {snap?.players.map(p => (
             <GrappleRope key={p.id+':rope'} p={p} isSelf={p.id === selfId} />
           ))}
-          {/* Grapple target preview for self when ready */}
-          <GrapplePreview me={me} mapName={snap?.mapName || mapName} />
+          {/* Grapple target preview for self when ready (only visible to IT) */}
+          {snap?.itId === selfId && <GrapplePreview me={me} mapName={snap?.mapName || mapName} />}
           {/* Dash FX */}
           <DashEffects snap={snap} />
           <FPCamera me={me} inputRef={inputRef} mapName={snap?.mapName || mapName} />
@@ -918,8 +918,27 @@ function Flashlight({ me }: { me: NetPlayer | null }) {
   })
   return (
     <>
-      <spotLight ref={lightRef} angle={0.5} penumbra={0.35} intensity={3.2} distance={40} color="#e0ecff" castShadow />
-      <pointLight position={[camera.position.x, camera.position.y, camera.position.z]} intensity={0.3} distance={8} color="#9fc5ff" />
+      {/* Brighter, tighter spotlight for flashlight in dark mode */}
+      <spotLight
+        ref={lightRef}
+        angle={0.42} /* ~24° cone */
+        penumbra={0.45}
+        intensity={6.5}
+        distance={60}
+        decay={2}
+        color="#eaf6ff"
+        castShadow
+        shadow-mapSize={[1024, 1024]}
+        shadow-bias={-0.0002}
+      />
+      {/* Local fill point light to softly illuminate nearby geometry */}
+      <pointLight
+        position={[camera.position.x, camera.position.y, camera.position.z]}
+        intensity={0.9}
+        distance={12}
+        decay={2}
+        color="#bfe6ff"
+      />
     </>
   )
 }
@@ -938,7 +957,17 @@ function GrappleRope({ p, isSelf }: { p: NetPlayer; isSelf?: boolean }) {
     geomRef.current.computeBoundingSphere()
   }
   if (!matRef.current) {
-    matRef.current = new THREE.MeshStandardMaterial({ color: '#34d399', emissive: '#064e3b', emissiveIntensity: 0.6, metalness: 0.1, roughness: 0.6, transparent: true, opacity: 0.95 })
+    matRef.current = new THREE.MeshStandardMaterial({
+      color: '#34d399',
+      emissive: '#064e3b',
+      emissiveIntensity: 1.0,
+      metalness: 0.1,
+      roughness: 0.5,
+      transparent: true,
+      opacity: 0.98,
+      side: THREE.DoubleSide,
+      depthWrite: true
+    })
   }
 
   useFrame(() => {
@@ -980,14 +1009,14 @@ function GrappleRope({ p, isSelf }: { p: NetPlayer; isSelf?: boolean }) {
     meshRef.current.quaternion.copy(q)
 
     // scale: Y controls length, X/Z control thickness
-    const ropeRadius = 0.06 // thicker rope
+  const ropeRadius = 0.09 // slightly thicker rope so it's more visible in first-person
     meshRef.current.scale.set(ropeRadius, len * 0.5, ropeRadius)
 
     // animate emissive pulse
     if (matRef.current) {
       const t = performance.now() * 0.001
       const pulse = 0.7 + Math.sin(t * 6.0) * 0.15
-      matRef.current.emissiveIntensity = 0.5 * pulse
+      matRef.current.emissiveIntensity = 0.9 * pulse
       // subtle color shift
       matRef.current.color.set('#34d399')
     }

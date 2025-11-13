@@ -49,7 +49,7 @@ export type Snapshot = {
   scores: Scores
   state?: string
   maps?: string[]
-  gameMode?: 'default' | 'noAbility' | 'dark'
+  gameMode?: 'default' | 'noAbility' | 'dark' | 'runners'
 }
 
 export type RoundResults = {

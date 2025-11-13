@@ -19,7 +19,7 @@ export default function App() {
   const [maps, setMaps] = useState<string[]>([])
   const [mapName, setMapName] = useState<string>('')
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({})
-  const [gameMode, setGameMode] = useState<'default' | 'noAbility' | 'dark'>('default')
+  const [gameMode, setGameMode] = useState<'default' | 'noAbility' | 'dark' | 'runners'>('default')
 
   useEffect(() => {
     // Use same-origin in production; allow override during local dev via VITE_SERVER_URL
@@ -37,7 +37,7 @@ export default function App() {
       setPlayers(payload.players)
       if (payload.maps) setMaps(payload.maps)
       if (payload.mapName) setMapName(payload.mapName)
-      if (payload.gameMode === 'default' || payload.gameMode === 'noAbility' || payload.gameMode === 'dark') setGameMode(payload.gameMode)
+  if (payload.gameMode === 'default' || payload.gameMode === 'noAbility' || payload.gameMode === 'dark' || payload.gameMode === 'runners') setGameMode(payload.gameMode)
       setScreen('lobby')
     })
     s.on('vote:update', (payload: { votes: Record<string,string> }) => {
