@@ -1116,8 +1116,10 @@ function GrappleRope({ p, isSelf, localTarget, localActive }: { p: NetPlayer; is
       meshRef.current.castShadow = false
       meshRef.current.receiveShadow = false
       if (matRef.current) {
+        // Render the rope on top of most scene geometry so it's visible in first-person
         matRef.current.depthWrite = false
-        matRef.current.depthTest = true
+        // Disable depth test so rope is not occluded by world geometry (useful for first-person view)
+        matRef.current.depthTest = false
         // ensure material transparent flag is on so opacity and emissive work predictably
         matRef.current.transparent = true
       }
