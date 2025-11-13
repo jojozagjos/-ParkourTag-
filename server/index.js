@@ -975,7 +975,9 @@ function snapshot(room) {
       color: p.color,
       face: p.face,
       hat: p.hat,
-      faceData: p.faceData
+      // Omit heavy `faceData` (user-provided image) from per-tick snapshots to save bandwidth.
+      // faceData is sent via lobby/profile updates when it changes.
+      faceData: null
     })),
     itId: room.itId,
     roundTime: room.intermission ? room.intermissionTime : room.roundTime,
