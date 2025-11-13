@@ -610,6 +610,15 @@ function FPCamera({ me, inputRef, mapName }: { me: NetPlayer | null; inputRef: R
     return target + (change + temp) * exp
   }
 
+  // Angle helpers to avoid yaw wrap snapping: normalize to [-PI,PI]
+  function wrapAngle(a: number) {
+    return ((a + Math.PI) % (Math.PI * 2)) - Math.PI
+  }
+  function shortestAngleDiff(target: number, current: number) {
+    const diff = wrapAngle(target - current)
+    return diff
+  }
+
   useEffect(() => {
     if (!me) return
     // initialize bases from current camera/me to avoid a jump on first frame
@@ -702,11 +711,15 @@ function FPCamera({ me, inputRef, mapName }: { me: NetPlayer | null; inputRef: R
     camera.position.z += (eyeZ - camera.position.z) * Math.min(1, dt * 10)
 
     // ---------- Base yaw/pitch (separate from effects to avoid feedback) ----------
-    const targetYaw = inputRef.current?.yaw ?? me.yaw
-    const targetPitch = inputRef.current?.pitch ?? me.pitch
-    const oriK = Math.min(1, dt * 12)
-    baseYawRef.current += (targetYaw - baseYawRef.current) * oriK
-    basePitchRef.current += (targetPitch - basePitchRef.current) * oriK
+  const targetYaw = inputRef.current?.yaw ?? me.yaw
+  const targetPitch = inputRef.current?.pitch ?? me.pitch
+  const oriK = Math.min(1, dt * 12)
+  // Use shortest angular difference for yaw to avoid sudden flips when crossing ±PI
+  const yawDelta = shortestAngleDiff(targetYaw, baseYawRef.current)
+  baseYawRef.current += yawDelta * oriK
+  // Pitch isn't circular but still clamp and lerp smoothly to avoid jumps
+  const pitchDelta = Math.max(-Math.PI, Math.min(Math.PI, targetPitch - basePitchRef.current))
+  basePitchRef.current += pitchDelta * oriK
 
     // ---------- Speed-based FOV ----------
     const speed = Math.hypot(me.vel[0], me.vel[2])
