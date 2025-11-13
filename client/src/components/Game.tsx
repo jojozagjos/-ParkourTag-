@@ -213,10 +213,15 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           />
           {snap?.gameMode === 'dark' ? (
             <>
-              {/* Very low global lighting in dark mode — rely on the player's flashlight for visibility */}
-              <hemisphereLight args={['#000000', '#000000', 0.02]} />
-              <ambientLight intensity={0.01} />
-              {/* No directional 'moon' light so the scene is mostly dark; Flashlight component will provide the usable light */}
+              {/* Brighter dark-mode baseline: keep moody feel but provide much better visibility.
+                  - Modest hemisphere for sky/ground ambient tint
+                  - Increased ambient light provides general scene visibility
+                  - A soft directional 'moon' helps silhouette geometry without washing out the scene
+              */}
+              <hemisphereLight args={['#0b1630', '#051018', 0.46]} />
+              <ambientLight intensity={0.18} />
+              {/* soft moon directional light to silhouette geometry */}
+              <directionalLight position={[-6, 12, -8]} intensity={0.6} color={'#cfe8ff'} />
             </>
           ) : (
             <>
@@ -249,8 +254,14 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
           {snap?.players.map(p => (
             <GrappleRope key={p.id+':rope'} p={p} isSelf={p.id === selfId} />
           ))}
-          {/* Grapple target preview for self when ready (only visible to IT) */}
-          {snap?.itId === selfId && <GrapplePreview me={me} mapName={snap?.mapName || mapName} />}
+          {/* Grapple target preview for self when ready.
+              In 'runners' gamemode, non-IT players who selected a grapple ability should also see the preview. */}
+          {(() => {
+            const amIT = snap?.itId === selfId
+            const runnersMode = snap?.gameMode === 'runners'
+            const canPreviewAsRunner = runnersMode && me?.itAbility === 'grapple'
+            return (amIT || canPreviewAsRunner) ? <GrapplePreview me={me} mapName={snap?.mapName || mapName} /> : null
+          })()}
           {/* Dash FX */}
           <DashEffects snap={snap} />
           <FPCamera me={me} inputRef={inputRef} mapName={snap?.mapName || mapName} />
@@ -298,8 +309,9 @@ export default function Game({ socket, selfId }: { socket: Socket; selfId: strin
   {/* IT Ability HUD (bottom-right) */}
   {(() => {
     if (!snap) return null
-    if (snap.gameMode === 'noAbility') return null
-    if (snap.itId !== selfId) return null
+  if (snap.gameMode === 'noAbility') return null
+  // show ability HUD if you're IT or if the room allows runners to use abilities
+  if (snap.itId !== selfId && snap.gameMode !== 'runners') return null
     const meP = snap.players.find(p => p.id === selfId)
     if (!meP) return null
     const ability = meP.itAbility || 'none'
@@ -921,12 +933,12 @@ function Flashlight({ me }: { me: NetPlayer | null }) {
       {/* Brighter, tighter spotlight for flashlight in dark mode */}
       <spotLight
         ref={lightRef}
-        angle={0.42} /* ~24° cone */
-        penumbra={0.45}
-        intensity={6.5}
-        distance={60}
+        angle={0.40} /* ~22° cone */
+        penumbra={0.5}
+        intensity={8.5}
+        distance={80}
         decay={2}
-        color="#eaf6ff"
+        color="#f0fbff"
         castShadow
         shadow-mapSize={[1024, 1024]}
         shadow-bias={-0.0002}
@@ -934,10 +946,10 @@ function Flashlight({ me }: { me: NetPlayer | null }) {
       {/* Local fill point light to softly illuminate nearby geometry */}
       <pointLight
         position={[camera.position.x, camera.position.y, camera.position.z]}
-        intensity={0.9}
-        distance={12}
+        intensity={1.4}
+        distance={14}
         decay={2}
-        color="#bfe6ff"
+        color="#cff0ff"
       />
     </>
   )
